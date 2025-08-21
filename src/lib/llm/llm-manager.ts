@@ -239,34 +239,68 @@ export class LLMManager {
 const getEnvConfig = (): Partial<LLMConfig> => {
   const config: Partial<LLMConfig> = {};
   
-  if (process.env.OPENAI_API_KEY) {
-    config.openai = {
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL,
-      defaultModel: process.env.OPENAI_DEFAULT_MODEL || 'gpt-4'
-    };
-  }
-  
-  if (process.env.ANTHROPIC_API_KEY) {
-    config.anthropic = {
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      baseURL: process.env.ANTHROPIC_BASE_URL,
-      defaultModel: process.env.ANTHROPIC_DEFAULT_MODEL || 'claude-3-sonnet-20240229'
-    };
-  }
-  
-  if (process.env.GEMINI_API_KEY) {
-    config.gemini = {
-      apiKey: process.env.GEMINI_API_KEY,
-      baseURL: process.env.GEMINI_BASE_URL,
-      defaultModel: process.env.GEMINI_DEFAULT_MODEL || 'gemini-pro'
-    };
-  }
+  // Safely access environment variables with fallbacks
+  try {
+    const env = import.meta.env || {};
+    
+    if (env.VITE_OPENAI_API_KEY || (typeof process !== 'undefined' && process.env?.OPENAI_API_KEY)) {
+      config.openai = {
+        apiKey: env.VITE_OPENAI_API_KEY || process.env?.OPENAI_API_KEY || '',
+        baseURL: env.VITE_OPENAI_BASE_URL || process.env?.OPENAI_BASE_URL,
+        defaultModel: env.VITE_OPENAI_DEFAULT_MODEL || process.env?.OPENAI_DEFAULT_MODEL || 'gpt-4'
+      };
+    }
+    
+    if (env.VITE_ANTHROPIC_API_KEY || (typeof process !== 'undefined' && process.env?.ANTHROPIC_API_KEY)) {
+      config.anthropic = {
+        apiKey: env.VITE_ANTHROPIC_API_KEY || process.env?.ANTHROPIC_API_KEY || '',
+        baseURL: env.VITE_ANTHROPIC_BASE_URL || process.env?.ANTHROPIC_BASE_URL,
+        defaultModel: env.VITE_ANTHROPIC_DEFAULT_MODEL || process.env?.ANTHROPIC_DEFAULT_MODEL || 'claude-3-sonnet-20240229'
+      };
+    }
+    
+    if (env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY)) {
+      config.gemini = {
+        apiKey: env.VITE_GEMINI_API_KEY || process.env?.GEMINI_API_KEY || '',
+        baseURL: env.VITE_GEMINI_BASE_URL || process.env?.GEMINI_BASE_URL,
+        defaultModel: env.VITE_GEMINI_DEFAULT_MODEL || process.env?.GEMINI_DEFAULT_MODEL || 'gemini-pro'
+      };
+    }
 
-  config.defaultProvider = (process.env.DEFAULT_LLM_PROVIDER as any) || 'mock';
+    config.defaultProvider = (env.VITE_DEFAULT_LLM_PROVIDER || process.env?.DEFAULT_LLM_PROVIDER as any) || 'mock';
+  } catch (error) {
+    console.warn('Environment variable access failed, using defaults:', error);
+    config.defaultProvider = 'mock';
+  }
   
   return config;
 };
 
-// Global LLM manager instance
-export const llmManager = new LLMManager(getEnvConfig());
+// Global LLM manager instance - lazy initialization to avoid startup errors
+let _llmManager: LLMManager | null = null;
+
+export const llmManager = {
+  getInstance(): LLMManager {
+    if (!_llmManager) {
+      try {
+        _llmManager = new LLMManager(getEnvConfig());
+      } catch (error) {
+        console.warn('LLM Manager initialization failed, using mock-only configuration:', error);
+        _llmManager = new LLMManager({ defaultProvider: 'mock' });
+      }
+    }
+    return _llmManager;
+  },
+  
+  async execute(prompt: string, providerName?: string, options?: LLMOptions): Promise<LLMResponse> {
+    return this.getInstance().execute(prompt, providerName, options);
+  },
+  
+  getAvailableProviders(): string[] {
+    return this.getInstance().getAvailableProviders();
+  },
+  
+  updateConfig(config: Partial<LLMConfig>): void {
+    return this.getInstance().updateConfig(config);
+  }
+};
