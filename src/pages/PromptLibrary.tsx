@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, Plus, Edit, Copy, Tag, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { useNavigate } from "react-router-dom";
+import { TemplateCreateModal } from "@/components/TemplateCreateModal";
+import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
+import { storageManager } from "@/lib/storage/storage-manager";
+import { PromptTemplate } from "@/lib/storage/types";
 
 const promptTemplates = {
   "single-shot": [
@@ -126,15 +131,95 @@ const getRiskColor = (level: string) => {
 export default function PromptLibrary() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<PromptTemplate | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const navigate = useNavigate();
+  const { showSuccess, showError } = useToastEnhanced();
 
-  const filterPrompts = (templates: any[]) => {
-    return templates.filter(template => {
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = async () => {
+    setIsLoading(true);
+    try {
+      const storedTemplates = await storageManager.getPromptTemplates();
+      if (storedTemplates.length === 0) {
+        // Initialize with default templates if none exist
+        await initializeDefaultTemplates();
+        const defaultTemplates = await storageManager.getPromptTemplates();
+        setTemplates(defaultTemplates);
+      } else {
+        setTemplates(storedTemplates);
+      }
+    } catch (error) {
+      console.error('Error loading templates:', error);
+      showError('Failed to load templates');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const initializeDefaultTemplates = async () => {
+    const defaultTemplates = [
+      ...promptTemplates["single-shot"].map(t => ({ ...t, createdAt: new Date(), updatedAt: new Date() })),
+      ...promptTemplates["multi-shot"].map(t => ({ ...t, createdAt: new Date(), updatedAt: new Date() }))
+    ];
+    
+    for (const template of defaultTemplates) {
+      await storageManager.savePromptTemplate(template as PromptTemplate);
+    }
+  };
+
+  const filterPrompts = (templateList: PromptTemplate[]) => {
+    return templateList.filter(template => {
       const matchesSearch = template.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            template.content.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesCategory = selectedCategory === "all" || template.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });
   };
+
+  const handleCreateTemplate = () => {
+    setEditingTemplate(null);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleEditTemplate = (template: PromptTemplate) => {
+    setEditingTemplate(template);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCopyTemplate = async (template: PromptTemplate) => {
+    try {
+      await navigator.clipboard.writeText(template.content);
+      showSuccess('Template content copied to clipboard');
+    } catch (error) {
+      showError('Failed to copy template content');
+    }
+  };
+
+  const handleUseTemplate = (template: PromptTemplate) => {
+    // Navigate to testing interface with this template
+    navigate('/testing', { state: { selectedTemplate: template } });
+  };
+
+  const handleTemplateCreated = (template: PromptTemplate) => {
+    setTemplates(prev => {
+      const existing = prev.find(t => t.id === template.id);
+      if (existing) {
+        return prev.map(t => t.id === template.id ? template : t);
+      } else {
+        return [...prev, template];
+      }
+    });
+  };
+
+  const getSingleShotTemplates = () => filterPrompts(templates.filter(t => !t.shots || t.shots === 1));
+  const getMultiShotTemplates = () => filterPrompts(templates.filter(t => t.shots && t.shots > 1));
 
   return (
     <div className="space-y-6">
@@ -146,7 +231,7 @@ export default function PromptLibrary() {
             Standardized prompt templates for LLM safety research
           </p>
         </div>
-        <Button>
+        <Button onClick={handleCreateTemplate}>
           <Plus className="h-4 w-4 mr-2" />
           Create Template
         </Button>
@@ -207,17 +292,32 @@ export default function PromptLibrary() {
         </TabsList>
 
         <TabsContent value="single-shot" className="space-y-4">
+          {isLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {filterPrompts(promptTemplates["single-shot"]).map((template) => (
+            {getSingleShotTemplates().map((template) => (
               <Card key={template.id} className="group hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <CardTitle className="text-lg">{template.title}</CardTitle>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleCopyTemplate(template)}
+                      >
                         <Copy className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleEditTemplate(template)}
+                      >
                         <Edit className="h-4 w-4" />
                       </Button>
                     </div>
@@ -240,7 +340,11 @@ export default function PromptLibrary() {
                   <Separator className="my-3" />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Variables: {template.variables.join(", ")}</span>
-                    <Button size="sm" variant="outline">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => handleUseTemplate(template)}
+                    >
                       Use Template
                     </Button>
                   </div>
@@ -248,20 +352,36 @@ export default function PromptLibrary() {
               </Card>
             ))}
           </div>
+          )}
         </TabsContent>
 
         <TabsContent value="multi-shot" className="space-y-4">
+          {isLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {filterPrompts(promptTemplates["multi-shot"]).map((template) => (
+            {getMultiShotTemplates().map((template) => (
               <Card key={template.id} className="group hover:shadow-md transition-shadow">
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <CardTitle className="text-lg">{template.title}</CardTitle>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleCopyTemplate(template)}
+                      >
                         <Copy className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleEditTemplate(template)}
+                      >
                         <Edit className="h-4 w-4" />
                       </Button>
                     </div>
@@ -287,7 +407,11 @@ export default function PromptLibrary() {
                   <Separator className="my-3" />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Variables: {template.variables.join(", ")}</span>
-                    <Button size="sm" variant="outline">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => handleUseTemplate(template)}
+                    >
                       Use Template
                     </Button>
                   </div>
@@ -295,6 +419,7 @@ export default function PromptLibrary() {
               </Card>
             ))}
           </div>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -306,24 +431,31 @@ export default function PromptLibrary() {
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
-              <div className="text-2xl font-bold text-foreground">11</div>
+              <div className="text-2xl font-bold text-foreground">{templates.length}</div>
               <div className="text-sm text-muted-foreground">Total Templates</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-destructive">6</div>
+              <div className="text-2xl font-bold text-destructive">{templates.filter(t => t.riskLevel === 'high').length}</div>
               <div className="text-sm text-muted-foreground">High Risk</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-warning">4</div>
+              <div className="text-2xl font-bold text-warning">{templates.filter(t => t.riskLevel === 'medium').length}</div>
               <div className="text-sm text-muted-foreground">Medium Risk</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-success">1</div>
+              <div className="text-2xl font-bold text-success">{templates.filter(t => t.riskLevel === 'low').length}</div>
               <div className="text-sm text-muted-foreground">Low Risk</div>
             </div>
           </div>
         </CardContent>
       </Card>
+      
+      <TemplateCreateModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onTemplateCreated={handleTemplateCreated}
+        editTemplate={editingTemplate}
+      />
     </div>
   );
 }
