@@ -7,6 +7,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 // Safe imports that won't cause circular dependencies
 import { Layout } from "./components/Layout";
+import { PageLoader } from "./components/LoadingSpinner";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 
@@ -21,31 +23,35 @@ const DataManagement = React.lazy(() => import("./pages/DataManagement"));
 
 const App = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Layout>
-            <React.Suspense fallback={
-              <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-              </div>
-            }>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/prompts" element={<PromptLibrary />} />
-                <Route path="/testing" element={<TestingInterface />} />
-                <Route path="/safety" element={<SafetyMonitor />} />
-                <Route path="/results" element={<Results />} />
-                <Route path="/data" element={<DataManagement />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </React.Suspense>
-          </Layout>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Layout>
+              <React.Suspense fallback={<PageLoader text="Loading page..." />}>
+                <ErrorBoundary fallback={
+                  <div className="p-6">
+                    <PageLoader text="Error loading page content" />
+                  </div>
+                }>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/prompts" element={<PromptLibrary />} />
+                    <Route path="/testing" element={<TestingInterface />} />
+                    <Route path="/safety" element={<SafetyMonitor />} />
+                    <Route path="/results" element={<Results />} />
+                    <Route path="/data" element={<DataManagement />} />
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </ErrorBoundary>
+              </React.Suspense>
+            </Layout>
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 };
 

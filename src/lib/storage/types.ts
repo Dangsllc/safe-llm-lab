@@ -19,8 +19,8 @@ export interface CloudStorageConfig {
 }
 
 export interface StorageAdapter {
-  upload(key: string, data: any): Promise<string>;
-  download(key: string): Promise<any>;
+  upload(key: string, data: unknown): Promise<string>;
+  download(key: string): Promise<unknown>;
   delete(key: string): Promise<boolean>;
   list(prefix?: string): Promise<string[]>;
   exists(key: string): Promise<boolean>;

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SafetyIndicator } from "@/components/SafetyIndicator";
 import { SafetyThresholdsDialog } from "@/components/SafetyThresholdsDialog";
 import { storageManager } from "@/lib/storage/storage-manager";
-import { SafetyThresholds } from "@/lib/storage/types";
+import { SafetyThresholds, TestSession } from "@/lib/storage/types";
 import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
 
 export default function SafetyMonitor() {
@@ -17,7 +17,7 @@ export default function SafetyMonitor() {
     lowRisk: { warning: 80, alert: 90 }
   });
   const [isThresholdsDialogOpen, setIsThresholdsDialogOpen] = useState(false);
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<TestSession[]>([]);
   
   const { showSuccess, showError } = useToastEnhanced();
   

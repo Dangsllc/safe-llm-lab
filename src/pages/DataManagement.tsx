@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
 import { storageManager } from "@/lib/storage/storage-manager";
 import { exportToJSON, exportSessionsToCSV, exportTemplatesToCSV } from "@/lib/export-utils";
+import { TestSession } from "@/lib/storage/types";
 
 export default function DataManagement() {
   const [databaseStats, setDatabaseStats] = useState({
@@ -17,7 +18,7 @@ export default function DataManagement() {
     dataSize: "0 MB",
     lastBackup: "Never"
   });
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<TestSession[]>([]);
   
   const { showSuccess, showError, showLoading, dismissToast } = useToastEnhanced();
   
