@@ -1,33 +1,182 @@
+import { useState, useEffect } from "react";
 import { BarChart3, Download, Filter, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
+import { storageManager } from "@/lib/storage/storage-manager";
+import { exportToJSON, exportSessionsToCSV, generateStatisticalReport, generateResearchSummary } from "@/lib/export-utils";
+import { TestSession, PromptTemplate } from "@/lib/storage/types";
 
 export default function Results() {
-  // Initial empty state - will populate with actual research results
+  const [sessions, setSessions] = useState<TestSession[]>([]);
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const { showSuccess, showError, showLoading, dismissToast } = useToastEnhanced();
+  
+  useEffect(() => {
+    loadData();
+  }, []);
+  
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const [testSessions, promptTemplates] = await Promise.all([
+        storageManager.getTestSessions(),
+        storageManager.getPromptTemplates()
+      ]);
+      setSessions(testSessions);
+      setTemplates(promptTemplates);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      showError('Failed to load research data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Calculate summary statistics from actual data
   const summaryStats = {
-    totalTests: 0,
-    singleShotTests: 0,
-    multiShotTests: 0,
-    avgSuccessRate: 0,
-    flaggedResponses: 0
+    totalTests: sessions.length,
+    singleShotTests: sessions.filter(s => {
+      const template = templates.find(t => t.title === s.promptTemplate);
+      return !template?.shots || template.shots === 1;
+    }).length,
+    multiShotTests: sessions.filter(s => {
+      const template = templates.find(t => t.title === s.promptTemplate);
+      return template?.shots && template.shots > 1;
+    }).length,
+    avgSuccessRate: sessions.length > 0 ? Math.round(
+      sessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length / sessions.length * 100
+    ) : 0,
+    flaggedResponses: sessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length
   };
 
-  const modelResults = [
-    { model: "GPT-4", singleShot: 0, multiShot: 0, overall: 0, tests: 0 },
-    { model: "Claude", singleShot: 0, multiShot: 0, overall: 0, tests: 0 },
-    { model: "Gemini", singleShot: 0, multiShot: 0, overall: 0, tests: 0 }
-  ];
+  // Calculate model results from session data
+  const calculateModelResults = () => {
+    const models = ['GPT-4', 'Claude', 'Gemini', 'Mock LLM'];
+    
+    return models.map(model => {
+      const modelSessions = sessions.filter(s => s.modelName === model);
+      const tests = modelSessions.length;
+      
+      if (tests === 0) {
+        return { model, singleShot: 0, multiShot: 0, overall: 0, tests: 0 };
+      }
+      
+      const singleShotSessions = modelSessions.filter(s => {
+        const template = templates.find(t => t.title === s.promptTemplate);
+        return !template?.shots || template.shots === 1;
+      });
+      
+      const multiShotSessions = modelSessions.filter(s => {
+        const template = templates.find(t => t.title === s.promptTemplate);
+        return template?.shots && template.shots > 1;
+      });
+      
+      const singleShotSuccess = singleShotSessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length;
+      const multiShotSuccess = multiShotSessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length;
+      const overallSuccess = modelSessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length;
+      
+      return {
+        model,
+        singleShot: singleShotSessions.length > 0 ? Math.round(singleShotSuccess / singleShotSessions.length * 100) : 0,
+        multiShot: multiShotSessions.length > 0 ? Math.round(multiShotSuccess / multiShotSessions.length * 100) : 0,
+        overall: Math.round(overallSuccess / tests * 100),
+        tests
+      };
+    });
+  };
+  
+  const modelResults = calculateModelResults();
 
-  const techniqueComparison = [
-    { technique: "Direct Request", highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 },
-    { technique: "Role-Playing", highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 },
-    { technique: "Gradual Escalation", highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 },
-    { technique: "Context Manipulation", highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 },
-    { technique: "Instruction Obfuscation", highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 }
-  ];
+  // Calculate technique comparison from session data
+  const calculateTechniqueComparison = () => {
+    const techniques = ["Direct", "Role-Playing", "Gradual Escalation", "Context Manipulation", "Instruction Obfuscation"];
+    
+    return techniques.map(technique => {
+      const techniqueSessions = sessions.filter(s => {
+        const template = templates.find(t => t.title === s.promptTemplate);
+        return template?.category === technique;
+      });
+      
+      const total = techniqueSessions.length;
+      
+      if (total === 0) {
+        return { technique, highRisk: 0, mediumRisk: 0, lowRisk: 0, total: 0 };
+      }
+      
+      const riskStats = techniqueSessions.reduce((acc, session) => {
+        const isSuccessful = session.classification === '1.0' || session.classification === '0.5';
+        if (isSuccessful) {
+          acc[`${session.riskLevel}Success`] = (acc[`${session.riskLevel}Success`] || 0) + 1;
+        }
+        acc[`${session.riskLevel}Total`] = (acc[`${session.riskLevel}Total`] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      return {
+        technique,
+        highRisk: riskStats.highTotal ? Math.round((riskStats.highSuccess || 0) / riskStats.highTotal * 100) : 0,
+        mediumRisk: riskStats.mediumTotal ? Math.round((riskStats.mediumSuccess || 0) / riskStats.mediumTotal * 100) : 0,
+        lowRisk: riskStats.lowTotal ? Math.round((riskStats.lowSuccess || 0) / riskStats.lowTotal * 100) : 0,
+        total
+      };
+    });
+  };
+  
+  const techniqueComparison = calculateTechniqueComparison();
+  
+  const handleExportCSV = async () => {
+    const loadingToast = showLoading('Exporting CSV...');
+    try {
+      await exportSessionsToCSV();
+      dismissToast(loadingToast);
+      showSuccess('CSV export completed successfully');
+    } catch (error) {
+      dismissToast(loadingToast);
+      showError('Export failed: ' + (error as Error).message);
+    }
+  };
+  
+  const handleExportJSON = async () => {
+    const loadingToast = showLoading('Exporting JSON...');
+    try {
+      await exportToJSON();
+      dismissToast(loadingToast);
+      showSuccess('JSON export completed successfully');
+    } catch (error) {
+      dismissToast(loadingToast);
+      showError('Export failed: ' + (error as Error).message);
+    }
+  };
+  
+  const handleGenerateReport = async () => {
+    const loadingToast = showLoading('Generating statistical report...');
+    try {
+      await generateStatisticalReport();
+      dismissToast(loadingToast);
+      showSuccess('Statistical report generated successfully');
+    } catch (error) {
+      dismissToast(loadingToast);
+      showError('Report generation failed: ' + (error as Error).message);
+    }
+  };
+  
+  const handleGenerateSummary = async () => {
+    const loadingToast = showLoading('Generating research summary...');
+    try {
+      await generateResearchSummary();
+      dismissToast(loadingToast);
+      showSuccess('Research summary generated successfully');
+    } catch (error) {
+      dismissToast(loadingToast);
+      showError('Summary generation failed: ' + (error as Error).message);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -40,11 +189,14 @@ export default function Results() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button 
+            variant="outline"
+            onClick={() => showSuccess('Filter functionality - Feature coming soon!')}
+          >
             <Filter className="h-4 w-4 mr-2" />
             Filter Results
           </Button>
-          <Button>
+          <Button onClick={handleExportJSON}>
             <Download className="h-4 w-4 mr-2" />
             Export Data
           </Button>
@@ -274,21 +426,36 @@ export default function Results() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Button variant="outline" className="h-20 flex-col gap-2">
+            <Button 
+              variant="outline" 
+              className="h-20 flex-col gap-2"
+              onClick={handleExportCSV}
+              disabled={sessions.length === 0}
+            >
               <Download className="h-5 w-5" />
               <div className="text-center">
                 <div className="font-medium">CSV Export</div>
                 <div className="text-xs text-muted-foreground">Raw data for analysis</div>
               </div>
             </Button>
-            <Button variant="outline" className="h-20 flex-col gap-2">
+            <Button 
+              variant="outline" 
+              className="h-20 flex-col gap-2"
+              onClick={handleGenerateReport}
+              disabled={sessions.length === 0}
+            >
               <BarChart3 className="h-5 w-5" />
               <div className="text-center">
                 <div className="font-medium">Statistical Report</div>
                 <div className="text-xs text-muted-foreground">Formatted analysis</div>
               </div>
             </Button>
-            <Button variant="outline" className="h-20 flex-col gap-2">
+            <Button 
+              variant="outline" 
+              className="h-20 flex-col gap-2"
+              onClick={handleGenerateSummary}
+              disabled={sessions.length === 0}
+            >
               <TrendingUp className="h-5 w-5" />
               <div className="text-center">
                 <div className="font-medium">Research Summary</div>

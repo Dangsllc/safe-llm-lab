@@ -1,18 +1,62 @@
+import { useState, useEffect } from "react";
 import { Database, Download, Upload, Search, Trash2, Archive } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
+import { storageManager } from "@/lib/storage/storage-manager";
+import { exportToJSON, exportSessionsToCSV, exportTemplatesToCSV } from "@/lib/export-utils";
 
 export default function DataManagement() {
-  // Initial empty state - database ready for research data
-  const databaseStats = {
+  const [databaseStats, setDatabaseStats] = useState({
     totalSessions: 0,
     totalResponses: 0,
     flaggedItems: 0,
     dataSize: "0 MB",
     lastBackup: "Never"
+  });
+  const [sessions, setSessions] = useState<any[]>([]);
+  
+  const { showSuccess, showError, showLoading, dismissToast } = useToastEnhanced();
+  
+  useEffect(() => {
+    loadData();
+  }, []);
+  
+  const loadData = async () => {
+    try {
+      const testSessions = await storageManager.getTestSessions();
+      const flaggedCount = testSessions.filter(s => s.classification === '1.0' || s.classification === '0.5').length;
+      
+      setSessions(testSessions);
+      setDatabaseStats({
+        totalSessions: testSessions.length,
+        totalResponses: testSessions.length,
+        flaggedItems: flaggedCount,
+        dataSize: `${Math.round(JSON.stringify(testSessions).length / 1024)} KB`,
+        lastBackup: localStorage.getItem('llm-safety-last-backup') || "Never"
+      });
+    } catch (error) {
+      console.error('Error loading data:', error);
+      showError('Failed to load database statistics');
+    }
+  };
+  
+  const handleCreateBackup = async () => {
+    const loadingToast = showLoading('Creating backup...');
+    try {
+      const backup = await storageManager.createBackup();
+      exportToJSON(backup, `backup-${new Date().toISOString().split('T')[0]}`);
+      localStorage.setItem('llm-safety-last-backup', new Date().toLocaleString());
+      await loadData(); // Refresh stats
+      dismissToast(loadingToast);
+      showSuccess('Backup created successfully');
+    } catch (error) {
+      dismissToast(loadingToast);
+      showError('Backup creation failed: ' + (error as Error).message);
+    }
   };
 
   const recentSessions = [
@@ -34,11 +78,14 @@ export default function DataManagement() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button 
+            variant="outline"
+            onClick={() => showSuccess('Import functionality - Feature coming soon!')}
+          >
             <Upload className="h-4 w-4 mr-2" />
             Import Data
           </Button>
-          <Button>
+          <Button onClick={handleCreateBackup}>
             <Archive className="h-4 w-4 mr-2" />
             Create Backup
           </Button>
@@ -150,21 +197,57 @@ export default function DataManagement() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <Button variant="outline" className="h-24 flex-col gap-2" disabled>
+                <Button 
+                  variant="outline" 
+                  className="h-24 flex-col gap-2" 
+                  disabled={sessions.length === 0}
+                  onClick={async () => {
+                    try {
+                      await exportSessionsToCSV();
+                      showSuccess('CSV export completed');
+                    } catch (error) {
+                      showError('Export failed: ' + (error as Error).message);
+                    }
+                  }}
+                >
                   <Download className="h-6 w-6" />
                   <div className="text-center">
                     <div className="font-medium">CSV Export</div>
                     <div className="text-xs text-muted-foreground">Raw session data</div>
                   </div>
                 </Button>
-                <Button variant="outline" className="h-24 flex-col gap-2" disabled>
+                <Button 
+                  variant="outline" 
+                  className="h-24 flex-col gap-2" 
+                  disabled={sessions.length === 0}
+                  onClick={async () => {
+                    try {
+                      await exportToJSON();
+                      showSuccess('JSON export completed');
+                    } catch (error) {
+                      showError('Export failed: ' + (error as Error).message);
+                    }
+                  }}
+                >
                   <Download className="h-6 w-6" />
                   <div className="text-center">
                     <div className="font-medium">JSON Export</div>
                     <div className="text-xs text-muted-foreground">Structured data</div>
                   </div>
                 </Button>
-                <Button variant="outline" className="h-24 flex-col gap-2" disabled>
+                <Button 
+                  variant="outline" 
+                  className="h-24 flex-col gap-2" 
+                  disabled={sessions.length === 0}
+                  onClick={async () => {
+                    try {
+                      await exportTemplatesToCSV();
+                      showSuccess('Templates export completed');
+                    } catch (error) {
+                      showError('Export failed: ' + (error as Error).message);
+                    }
+                  }}
+                >
                   <Download className="h-6 w-6" />
                   <div className="text-center">
                     <div className="font-medium">Statistical Package</div>
@@ -213,7 +296,11 @@ export default function DataManagement() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-3">
-                  <Button className="w-full justify-start" variant="outline">
+                  <Button 
+                    className="w-full justify-start" 
+                    variant="outline"
+                    onClick={handleCreateBackup}
+                  >
                     <Archive className="h-4 w-4 mr-2" />
                     Create Full Backup
                   </Button>

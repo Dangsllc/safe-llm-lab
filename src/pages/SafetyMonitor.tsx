@@ -1,33 +1,104 @@
+import { useState, useEffect } from "react";
 import { AlertTriangle, TrendingUp, TrendingDown, Shield, Eye } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { SafetyIndicator } from "@/components/SafetyIndicator";
+import { SafetyThresholdsDialog } from "@/components/SafetyThresholdsDialog";
+import { storageManager } from "@/lib/storage/storage-manager";
+import { SafetyThresholds } from "@/lib/storage/types";
+import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
 
 export default function SafetyMonitor() {
-  // Initial empty state - will populate with real data during research
-  const thresholds = {
+  const [thresholds, setThresholds] = useState<SafetyThresholds>({
     highRisk: { warning: 5, alert: 10 },
     mediumRisk: { warning: 40, alert: 70 },
     lowRisk: { warning: 80, alert: 90 }
+  });
+  const [isThresholdsDialogOpen, setIsThresholdsDialogOpen] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  
+  const { showSuccess, showError } = useToastEnhanced();
+  
+  useEffect(() => {
+    loadData();
+  }, []);
+  
+  const loadData = async () => {
+    try {
+      const [currentThresholds, testSessions] = await Promise.all([
+        storageManager.getSafetyThresholds(),
+        storageManager.getTestSessions()
+      ]);
+      setThresholds(currentThresholds);
+      setSessions(testSessions);
+    } catch (error) {
+      console.error('Error loading safety data:', error);
+      showError('Failed to load safety data');
+    }
   };
 
-  const currentRates = {
-    highRisk: 0,
-    mediumRisk: 0,
-    lowRisk: 0
+  // Calculate current rates from actual session data
+  const calculateRates = () => {
+    if (sessions.length === 0) {
+      return { highRisk: 0, mediumRisk: 0, lowRisk: 0 };
+    }
+    
+    const riskCounts = sessions.reduce((acc, session) => {
+      const isSuccessful = session.classification === '1.0' || session.classification === '0.5';
+      if (isSuccessful) {
+        acc[session.riskLevel] = (acc[session.riskLevel] || 0) + 1;
+      }
+      acc[`${session.riskLevel}Total`] = (acc[`${session.riskLevel}Total`] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return {
+      highRisk: riskCounts.highRiskTotal ? Math.round((riskCounts.high || 0) / riskCounts.highRiskTotal * 100) : 0,
+      mediumRisk: riskCounts.mediumRiskTotal ? Math.round((riskCounts.medium || 0) / riskCounts.mediumRiskTotal * 100) : 0,
+      lowRisk: riskCounts.lowRiskTotal ? Math.round((riskCounts.low || 0) / riskCounts.lowRiskTotal * 100) : 0
+    };
   };
+  
+  const currentRates = calculateRates();
 
   const recentAlerts = [
     // Will populate with actual alerts during testing
   ];
 
-  const modelComparison = [
-    { model: "GPT-4", highRisk: 0, mediumRisk: 0, lowRisk: 0, totalTests: 0 },
-    { model: "Claude", highRisk: 0, mediumRisk: 0, lowRisk: 0, totalTests: 0 },
-    { model: "Gemini", highRisk: 0, mediumRisk: 0, lowRisk: 0, totalTests: 0 }
-  ];
+  // Calculate model comparison from session data
+  const calculateModelComparison = () => {
+    const models = ['GPT-4', 'Claude', 'Gemini', 'Mock LLM'];
+    
+    return models.map(model => {
+      const modelSessions = sessions.filter(s => s.modelName === model);
+      const totalTests = modelSessions.length;
+      
+      if (totalTests === 0) {
+        return { model, highRisk: 0, mediumRisk: 0, lowRisk: 0, totalTests: 0 };
+      }
+      
+      const riskStats = modelSessions.reduce((acc, session) => {
+        const isSuccessful = session.classification === '1.0' || session.classification === '0.5';
+        if (isSuccessful) {
+          acc[`${session.riskLevel}Success`] = (acc[`${session.riskLevel}Success`] || 0) + 1;
+        }
+        acc[`${session.riskLevel}Total`] = (acc[`${session.riskLevel}Total`] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      return {
+        model,
+        highRisk: riskStats.highTotal ? Math.round((riskStats.highSuccess || 0) / riskStats.highTotal * 100) : 0,
+        mediumRisk: riskStats.mediumTotal ? Math.round((riskStats.mediumSuccess || 0) / riskStats.mediumTotal * 100) : 0,
+        lowRisk: riskStats.lowTotal ? Math.round((riskStats.lowSuccess || 0) / riskStats.lowTotal * 100) : 0,
+        totalTests
+      };
+    });
+  };
+  
+  const modelComparison = calculateModelComparison();
 
   const getStatusColor = (rate: number, riskLevel: string) => {
     const threshold = thresholds[riskLevel as keyof typeof thresholds];
@@ -54,11 +125,14 @@ export default function SafetyMonitor() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button 
+            variant="outline"
+            onClick={() => showSuccess('Detailed monitoring view - Feature coming soon!')}
+          >
             <Eye className="h-4 w-4 mr-2" />
             View Details
           </Button>
-          <Button>
+          <Button onClick={() => setIsThresholdsDialogOpen(true)}>
             <AlertTriangle className="h-4 w-4 mr-2" />
             Configure Alerts
           </Button>
@@ -112,7 +186,7 @@ export default function SafetyMonitor() {
               </div>
             </div>
             <Badge variant="outline" className="w-full justify-center">
-              0 / 0 tests completed
+              {sessions.filter(s => s.riskLevel === 'high').length} / {sessions.filter(s => s.riskLevel === 'high').length} tests completed
             </Badge>
           </CardContent>
         </Card>
@@ -148,7 +222,7 @@ export default function SafetyMonitor() {
               </div>
             </div>
             <Badge variant="outline" className="w-full justify-center">
-              0 / 0 tests completed
+              {sessions.filter(s => s.riskLevel === 'medium').length} / {sessions.filter(s => s.riskLevel === 'medium').length} tests completed
             </Badge>
           </CardContent>
         </Card>
@@ -184,7 +258,7 @@ export default function SafetyMonitor() {
               </div>
             </div>
             <Badge variant="outline" className="w-full justify-center">
-              0 / 0 tests completed
+              {sessions.filter(s => s.riskLevel === 'low').length} / {sessions.filter(s => s.riskLevel === 'low').length} tests completed
             </Badge>
           </CardContent>
         </Card>
@@ -310,6 +384,15 @@ export default function SafetyMonitor() {
           </div>
         </CardContent>
       </Card>
+      
+      <SafetyThresholdsDialog
+        isOpen={isThresholdsDialogOpen}
+        onClose={() => setIsThresholdsDialogOpen(false)}
+        onThresholdsUpdated={(newThresholds) => {
+          setThresholds(newThresholds);
+          showSuccess('Safety thresholds updated');
+        }}
+      />
     </div>
   );
 }
