@@ -1,7 +1,7 @@
 // Authentication context for multi-user system
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authService, User, LoginRequest, RegisterRequest, AuthResponse } from '@/lib/api/auth';
+import { mockAuthService as authService, User, LoginRequest, RegisterRequest, AuthResponse } from '@/lib/api/mock-auth';
 import { logSecurity, logError } from '@/lib/security/secure-logger';
 
 interface AuthContextType {
