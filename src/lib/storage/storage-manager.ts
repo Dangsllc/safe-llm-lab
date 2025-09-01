@@ -1,12 +1,21 @@
-import { StorageAdapter, CloudStorageConfig, TestSession, PromptTemplate, SafetyThresholds } from './types';
+import { StorageAdapter, TestSession, PromptTemplate, SafetyThresholds, CloudStorageConfig } from './types';
+import { SecureStorage } from '../security/encryption';
 
-// Local storage adapter as fallback
+// Secure local storage adapter implementation
 class LocalStorageAdapter implements StorageAdapter {
-  private prefix = 'llm-safety-';
+  private prefix: string;
+
+  constructor(prefix: string = 'llm-safety-') {
+    this.prefix = prefix;
+  }
 
   async upload(key: string, data: any): Promise<string> {
     try {
-      localStorage.setItem(this.prefix + key, JSON.stringify(data));
+      // Use secure encrypted storage for sensitive data
+      const success = await SecureStorage.setItem(this.prefix + key, data);
+      if (!success) {
+        throw new Error('Encryption failed');
+      }
       return key;
     } catch (error) {
       throw new Error(`Failed to store ${key}: ${error}`);
@@ -15,8 +24,22 @@ class LocalStorageAdapter implements StorageAdapter {
 
   async download(key: string): Promise<any> {
     try {
+      // Try secure storage first
+      const secureData = await SecureStorage.getItem(this.prefix + key);
+      if (secureData !== null) {
+        return secureData;
+      }
+      
+      // Fallback to unencrypted data and migrate
       const item = localStorage.getItem(this.prefix + key);
-      return item ? JSON.parse(item) : null;
+      if (item) {
+        const data = JSON.parse(item);
+        // Migrate to secure storage
+        await SecureStorage.migrateUnencryptedData(this.prefix + key);
+        return data;
+      }
+      
+      return null;
     } catch (error) {
       throw new Error(`Failed to retrieve ${key}: ${error}`);
     }
@@ -24,6 +47,8 @@ class LocalStorageAdapter implements StorageAdapter {
 
   async delete(key: string): Promise<boolean> {
     try {
+      SecureStorage.removeItem(this.prefix + key);
+      // Also remove any legacy unencrypted data
       localStorage.removeItem(this.prefix + key);
       return true;
     } catch (error) {
@@ -83,10 +108,20 @@ export class StorageManager {
   }
 
   // Test Sessions
-  async getTestSessions(): Promise<TestSession[]> {
+  async getTestSessions(studyId?: string): Promise<TestSession[]> {
     try {
-      const sessions = await this.adapter.download('test-sessions');
-      return sessions || [];
+      const rawSessions = await this.adapter.download('test-sessions');
+      let sessions: TestSession[] = Array.isArray(rawSessions) ? rawSessions : [];
+      
+      // Migrate old sessions that don't have study information
+      sessions = await this.migrateSessionsIfNeeded(sessions);
+      
+      // Filter by study if specified
+      if (studyId) {
+        sessions = sessions.filter((s: TestSession) => s.studyId === studyId);
+      }
+      
+      return sessions;
     } catch (error) {
       console.error('Error loading test sessions:', error);
       return [];
@@ -125,10 +160,20 @@ export class StorageManager {
   }
 
   // Prompt Templates
-  async getPromptTemplates(): Promise<PromptTemplate[]> {
+  async getPromptTemplates(studyId?: string): Promise<PromptTemplate[]> {
     try {
-      const templates = await this.adapter.download('prompt-templates');
-      return templates || [];
+      const rawTemplates = await this.adapter.download('prompt-templates');
+      let templates: PromptTemplate[] = Array.isArray(rawTemplates) ? rawTemplates : [];
+      
+      // Migrate old templates that don't have study information
+      templates = await this.migrateTemplatesIfNeeded(templates);
+      
+      // Filter by study if specified
+      if (studyId) {
+        templates = templates.filter((t: PromptTemplate) => t.studyId === studyId);
+      }
+      
+      return templates;
     } catch (error) {
       console.error('Error loading prompt templates:', error);
       return [];
@@ -169,12 +214,16 @@ export class StorageManager {
   // Safety Thresholds
   async getSafetyThresholds(): Promise<SafetyThresholds> {
     try {
-      const thresholds = await this.adapter.download('safety-thresholds');
-      return thresholds || {
+      const rawThresholds = await this.adapter.download('safety-thresholds');
+      const defaultThresholds: SafetyThresholds = {
         highRisk: { warning: 5, alert: 10 },
         mediumRisk: { warning: 40, alert: 70 },
         lowRisk: { warning: 80, alert: 90 }
       };
+      
+      return (rawThresholds && typeof rawThresholds === 'object') ? 
+        { ...defaultThresholds, ...rawThresholds as SafetyThresholds } : 
+        defaultThresholds;
     } catch (error) {
       console.error('Error loading safety thresholds:', error);
       return {
@@ -228,6 +277,54 @@ export class StorageManager {
       console.error('Error restoring backup:', error);
       return false;
     }
+  }
+
+  // Migration helpers
+  private async migrateSessionsIfNeeded(sessions: TestSession[]): Promise<TestSession[]> {
+    const { studyManager } = await import('./study-manager');
+    const needsMigration = sessions.some(s => !s.studyId);
+    
+    if (needsMigration) {
+      // Ensure we have a default study
+      const defaultStudy = await studyManager.ensureDefaultStudy();
+      
+      // Update sessions without studyId
+      const migratedSessions = sessions.map(s => ({
+        ...s,
+        studyId: s.studyId || defaultStudy.id
+      }));
+      
+      // Save migrated sessions
+      await this.adapter.upload('test-sessions', migratedSessions);
+      return migratedSessions;
+    }
+    
+    return sessions;
+  }
+
+  private async migrateTemplatesIfNeeded(templates: PromptTemplate[]): Promise<PromptTemplate[]> {
+    const { studyManager } = await import('./study-manager');
+    const needsMigration = templates.some(t => !t.studyId);
+    
+    if (needsMigration) {
+      // Ensure we have a default study
+      const defaultStudy = await studyManager.ensureDefaultStudy();
+      
+      // Update templates without studyId
+      const migratedTemplates = templates.map(t => ({
+        ...t,
+        studyId: t.studyId || defaultStudy.id,
+        isShared: t.isShared ?? true,
+        usageCount: t.usageCount ?? 0,
+        usedInStudies: t.usedInStudies ?? [t.studyId || defaultStudy.id]
+      }));
+      
+      // Save migrated templates
+      await this.adapter.upload('prompt-templates', migratedTemplates);
+      return migratedTemplates;
+    }
+    
+    return templates;
   }
 }
 

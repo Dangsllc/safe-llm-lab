@@ -281,7 +281,9 @@ class OpenAIProvider implements LLMProvider {
         timestamp: new Date()
       };
     } catch (error) {
-      console.error('OpenAI API error:', error);
+      // Use secure logging to prevent API key leakage
+      const { logError } = await import('../security/secure-logger');
+      logError('OpenAI API request failed', 'LLM-MANAGER');
       throw error;
     }
   }
@@ -352,42 +354,28 @@ export class LLMManager {
   }
 }
 
-// Environment variable configuration (will be loaded from .env)
+// Secure configuration - NO CLIENT-SIDE API KEYS
 const getEnvConfig = (): Partial<LLMConfig> => {
   const config: Partial<LLMConfig> = {};
   
-  // Safely access environment variables with fallbacks
   try {
-    const env = import.meta.env || {};
+    const env = import.meta.env as Record<string, string> || {};
     
-    if (env.VITE_OPENAI_API_KEY || (typeof process !== 'undefined' && process.env?.OPENAI_API_KEY)) {
-      config.openai = {
-        apiKey: env.VITE_OPENAI_API_KEY || process.env?.OPENAI_API_KEY || '',
-        baseURL: env.VITE_OPENAI_BASE_URL || process.env?.OPENAI_BASE_URL,
-        defaultModel: env.VITE_OPENAI_DEFAULT_MODEL || process.env?.OPENAI_DEFAULT_MODEL || 'gpt-4'
-      };
+    // SECURITY: Only allow mock provider on client-side
+    // Real API keys should NEVER be accessible in client bundle
+    const defaultProvider = env.VITE_DEFAULT_LLM_PROVIDER || 'mock';
+    config.defaultProvider = defaultProvider === 'mock' ? 'mock' : 'mock';
+    
+    // API Proxy configuration for production
+    if (env.VITE_API_PROXY_URL) {
+      config.apiProxyUrl = env.VITE_API_PROXY_URL;
+      config.apiProxyEnabled = env.VITE_API_PROXY_ENABLED === 'true';
     }
     
-    if (env.VITE_ANTHROPIC_API_KEY || (typeof process !== 'undefined' && process.env?.ANTHROPIC_API_KEY)) {
-      config.anthropic = {
-        apiKey: env.VITE_ANTHROPIC_API_KEY || process.env?.ANTHROPIC_API_KEY || '',
-        baseURL: env.VITE_ANTHROPIC_BASE_URL || process.env?.ANTHROPIC_BASE_URL,
-        defaultModel: env.VITE_ANTHROPIC_DEFAULT_MODEL || process.env?.ANTHROPIC_DEFAULT_MODEL || 'claude-3-sonnet-20240229'
-      };
-    }
-    
-    if (env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY)) {
-      config.gemini = {
-        apiKey: env.VITE_GEMINI_API_KEY || process.env?.GEMINI_API_KEY || '',
-        baseURL: env.VITE_GEMINI_BASE_URL || process.env?.GEMINI_BASE_URL,
-        defaultModel: env.VITE_GEMINI_DEFAULT_MODEL || process.env?.GEMINI_DEFAULT_MODEL || 'gemini-pro'
-      };
-    }
-
-    const defaultProvider = env.VITE_DEFAULT_LLM_PROVIDER || process.env?.DEFAULT_LLM_PROVIDER;
-    config.defaultProvider = (['mock', 'openai', 'anthropic', 'gemini'].includes(defaultProvider as string) ? defaultProvider : 'mock') as 'mock' | 'openai' | 'anthropic' | 'gemini';
   } catch (error) {
-    console.warn('Environment variable access failed, using defaults:', error);
+    // Use secure logging
+    const { logWarn } = require('../security/secure-logger');
+    logWarn('Environment variable access failed, using secure defaults', 'LLM-CONFIG');
     config.defaultProvider = 'mock';
   }
   

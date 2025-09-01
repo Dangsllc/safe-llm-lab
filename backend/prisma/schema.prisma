@@ -1,0 +1,245 @@
+// Database schema for multi-user Safe LLM Lab with security features
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  RESEARCHER
+  ANALYST
+  VIEWER
+}
+
+enum CollaborationRole {
+  OWNER
+  EDITOR
+  CONTRIBUTOR
+  VIEWER
+}
+
+enum StudyStatus {
+  PLANNING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SecurityEventType {
+  LOGIN
+  LOGOUT
+  FAILED_LOGIN
+  PASSWORD_CHANGE
+  MFA_ENABLED
+  PERMISSION_CHANGE
+  DATA_ACCESS
+  SUSPICIOUS_ACTIVITY
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model User {
+  id                   String    @id @default(uuid())
+  email                String    @unique
+  name                 String
+  role                 UserRole  @default(RESEARCHER)
+  passwordHash         String
+  mfaSecret            String?
+  mfaEnabled           Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  lastLogin            DateTime?
+  failedLoginAttempts  Int       @default(0)
+  lockedUntil          DateTime?
+  isActive             Boolean   @default(true)
+  
+  // Relationships
+  ownedStudies         Study[]   @relation("StudyOwner")
+  collaborations       StudyCollaborator[]
+  testSessions         TestSession[]
+  promptTemplates      PromptTemplate[]
+  securityEvents       SecurityAuditLog[]
+  sessions             Session[]
+  sentInvites          UserInvite[] @relation("InviteSender")
+  encryptionKeys       DataEncryption[]
+  
+  @@map("users")
+}
+
+model Study {
+  id          String      @id @default(uuid())
+  name        String
+  description String
+  objectives  String[]
+  tags        String[]
+  ownerId     String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  isActive    Boolean     @default(true)
+  
+  // JSON metadata
+  totalTests     Int      @default(0)
+  totalPrompts   Int      @default(0)
+  lastActivity   DateTime @default(now())
+  status         StudyStatus @default(PLANNING)
+  
+  // Relationships
+  owner          User     @relation("StudyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  collaborators  StudyCollaborator[]
+  testSessions   TestSession[]
+  promptTemplates PromptTemplate[]
+  invites        UserInvite[]
+  
+  @@map("studies")
+}
+
+model StudyCollaborator {
+  id          String           @id @default(uuid())
+  studyId     String
+  userId      String
+  role        CollaborationRole
+  joinedAt    DateTime         @default(now())
+  invitedBy   String
+  permissions String[]
+  
+  // Relationships
+  study       Study            @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([studyId, userId])
+  @@map("study_collaborators")
+}
+
+model TestSession {
+  id               String    @id @default(uuid())
+  studyId          String
+  userId           String
+  modelName        String
+  promptTemplate   String
+  promptTemplateId String?
+  prompt           String
+  response         String
+  classification   String
+  notes            String
+  timestamp        DateTime  @default(now())
+  riskLevel        RiskLevel
+  encryptedData    String?   // For sensitive data
+  
+  // Relationships
+  study            Study     @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("test_sessions")
+}
+
+model PromptTemplate {
+  id            String   @id @default(uuid())
+  title         String
+  content       String
+  riskLevel     String
+  variables     String[]
+  category      String
+  shots         Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdBy     String
+  studyId       String
+  isShared      Boolean  @default(false)
+  usageCount    Int      @default(0)
+  derivedFrom   String?
+  usedInStudies String[]
+  
+  // Relationships
+  creator       User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  study         Study    @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  
+  @@map("prompt_templates")
+}
+
+model SecurityAuditLog {
+  id           String            @id @default(uuid())
+  userId       String?
+  action       String
+  resourceType String
+  resourceId   String?
+  ipAddress    String
+  userAgent    String
+  success      Boolean
+  details      Json?
+  timestamp    DateTime          @default(now())
+  severity     Severity
+  hash         String            // For tamper detection
+  
+  // Relationships
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@map("security_audit_log")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  accessToken  String   @unique
+  refreshToken String   @unique
+  ipAddress    String
+  userAgent    String
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  lastActivity DateTime @default(now())
+  isActive     Boolean  @default(true)
+  
+  // Relationships
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("sessions")
+}
+
+model UserInvite {
+  id        String    @id @default(uuid())
+  email     String
+  role      String
+  studyId   String?
+  invitedBy String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  
+  // Relationships
+  inviter   User      @relation("InviteSender", fields: [invitedBy], references: [id], onDelete: Cascade)
+  study     Study?    @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  
+  @@map("user_invites")
+}
+
+model DataEncryption {
+  id        String    @id @default(uuid())
+  userId    String
+  keyId     String
+  algorithm String
+  createdAt DateTime  @default(now())
+  rotatedAt DateTime?
+  isActive  Boolean   @default(true)
+  
+  // Relationships
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("data_encryption")
+}

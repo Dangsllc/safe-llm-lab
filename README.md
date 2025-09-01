@@ -41,12 +41,21 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/e8105496-f615-4f6b-bb39-110535828307) and click on Share -> Publish.
+This project can be deployed to any static hosting service:
 
-## Can I connect a custom domain to my Lovable project?
+1. **Build the project**: `npm run build`
+2. **Deploy the `dist` folder** to your hosting provider
+3. **Configure environment variables** for production API keys (server-side only)
 
-Yes, you can!
+### Deployment Options
+- **Netlify**: Connect your repository for automatic deployments
+- **Vercel**: Import project and configure build settings
+- **AWS S3 + CloudFront**: Static hosting with CDN
+- **GitHub Pages**: Free hosting for open source projects
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### Custom Domain Setup
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+Most hosting providers support custom domains:
+1. Configure DNS records to point to your hosting provider
+2. Add domain in your hosting provider's dashboard
+3. Enable HTTPS/SSL certificates for security

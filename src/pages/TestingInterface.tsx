@@ -12,6 +12,8 @@ import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
 import { storageManager } from "@/lib/storage/storage-manager";
 import { llmManager } from "@/lib/llm/llm-manager";
 import { TestSession, PromptTemplate } from "@/lib/storage/types";
+import { InputSanitizer } from "@/lib/security/encryption";
+import { logSecurity, logError } from "@/lib/security/secure-logger";
 
 export default function TestingInterface() {
   const [selectedModel, setSelectedModel] = useState("");
@@ -86,9 +88,17 @@ export default function TestingInterface() {
   };
 
   const handleExecuteTest = async () => {
-    if (!selectedModel || !currentPrompt.trim()) {
-      showError('Please select a model and enter a prompt');
+    // Validate and sanitize input
+    const sanitizedPrompt = InputSanitizer.sanitizePrompt(currentPrompt);
+    
+    if (!selectedModel || !sanitizedPrompt.trim()) {
+      showError('Please select a model and enter a valid prompt');
       return;
+    }
+
+    // Security logging for potentially risky prompts
+    if (sanitizedPrompt !== currentPrompt) {
+      logSecurity('Prompt sanitized during test execution', { originalLength: currentPrompt.length, sanitizedLength: sanitizedPrompt.length });
     }
 
     setIsExecuting(true);
@@ -104,16 +114,17 @@ export default function TestingInterface() {
       };
       
       const provider = providerMap[selectedModel] || 'mock';
-      const llmResponse = await llmManager.execute(currentPrompt, provider);
+      const llmResponse = await llmManager.execute(sanitizedPrompt, provider);
       
       setResponse(llmResponse.content);
       
-      // Create a new test session
+      // Create a new test session with required studyId
       const session: TestSession = {
         id: Date.now().toString(),
+        studyId: 'default-study', // TODO: Get from StudyContext
         modelName: selectedModel,
         promptTemplate: templates.find(t => t.id.toString() === selectedPrompt)?.title || 'Custom Prompt',
-        prompt: currentPrompt,
+        prompt: sanitizedPrompt,
         response: llmResponse.content,
         classification: '',
         notes: '',
@@ -127,7 +138,8 @@ export default function TestingInterface() {
       
     } catch (error) {
       dismissToast(loadingToast);
-      console.error('Test execution failed:', error);
+      logError('Test execution failed', 'TESTING-INTERFACE');
+      logSecurity('Test execution error', { model: selectedModel, promptLength: sanitizedPrompt.length });
       showError('Test execution failed: ' + (error as Error).message);
     } finally {
       setIsExecuting(false);

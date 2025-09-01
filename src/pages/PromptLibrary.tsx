@@ -11,6 +11,8 @@ import { TemplateCreateModal } from "@/components/TemplateCreateModal";
 import { useToastEnhanced } from "@/hooks/use-toast-enhanced";
 import { storageManager } from "@/lib/storage/storage-manager";
 import { PromptTemplate } from "@/lib/storage/types";
+import { InputSanitizer } from "@/lib/security/encryption";
+import { logSecurity, logError } from "@/lib/security/secure-logger";
 
 const promptTemplates = {
   "single-shot": [

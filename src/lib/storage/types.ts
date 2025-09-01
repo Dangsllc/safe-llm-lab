@@ -26,10 +26,30 @@ export interface StorageAdapter {
   exists(key: string): Promise<boolean>;
 }
 
+export interface Study {
+  id: string;
+  name: string;
+  description: string;
+  objectives: string[];
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+  isActive: boolean;
+  collaborators?: string[];
+  metadata: {
+    totalTests: number;
+    totalPrompts: number;
+    lastActivity: Date;
+    status: 'planning' | 'active' | 'paused' | 'completed' | 'archived';
+  };
+}
+
 export interface TestSession {
   id: string;
+  studyId: string;
   modelName: string;
   promptTemplate: string;
+  promptTemplateId?: number;
   prompt: string;
   response: string;
   classification: string;
@@ -48,6 +68,13 @@ export interface PromptTemplate {
   shots?: number;
   createdAt: Date;
   updatedAt: Date;
+  // Study relationship
+  studyId: string;  // Original study where this prompt was created
+  isShared: boolean; // Whether this prompt can be used in other studies
+  usageCount: number; // How many times this prompt has been used
+  // Cross-study tracking
+  derivedFrom?: number; // If this prompt was copied from another, reference to original
+  usedInStudies: string[]; // List of study IDs where this prompt has been used
 }
 
 export interface SafetyThresholds {

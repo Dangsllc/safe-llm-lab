@@ -26,6 +26,9 @@ export interface LLMResponse {
 }
 
 export interface LLMConfig {
+  defaultProvider: 'mock' | 'openai' | 'anthropic' | 'gemini';
+  apiProxyUrl?: string;
+  apiProxyEnabled?: boolean;
   openai?: {
     apiKey: string;
     baseURL?: string;
@@ -41,5 +44,4 @@ export interface LLMConfig {
     baseURL?: string;
     defaultModel?: string;
   };
-  defaultProvider: 'openai' | 'anthropic' | 'gemini' | 'mock';
 }
