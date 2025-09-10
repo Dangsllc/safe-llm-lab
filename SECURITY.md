@@ -164,9 +164,9 @@ const { isAuthenticated, hasPermission } = useSession();
 ## Contact Information
 
 For security-related questions or concerns:
-- **Development Team**: [Contact information]
-- **Security Lead**: [Contact information]
-- **Emergency Contact**: [24/7 contact for critical issues]
+- **Development Team**: Dan Gonzalez
+- **Security Lead**: Dan Gonzalez
+- **Emergency Contact**: Message DangsLLC via github
 
 ---
 
