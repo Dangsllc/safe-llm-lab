@@ -19,8 +19,12 @@ export class EncryptionService {
   }
 
   private deriveMasterKey(): Buffer {
-    const secret = process.env.ENCRYPTION_MASTER_KEY || 'default-key-for-development';
-    const salt = process.env.ENCRYPTION_SALT || 'default-salt';
+    const secret = process.env['ENCRYPTION_MASTER_KEY'];
+    const salt = process.env['ENCRYPTION_SALT'];
+    
+    if (!secret || !salt) {
+      throw new Error('ENCRYPTION_MASTER_KEY and ENCRYPTION_SALT must be set in environment variables');
+    }
     
     return crypto.pbkdf2Sync(
       secret,
@@ -66,7 +70,7 @@ export class EncryptionService {
       
       return Buffer.from(JSON.stringify(result)).toString('base64');
     } catch (error) {
-      throw new Error(`Encryption failed: ${error.message}`);
+      throw new Error(`Encryption failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -91,7 +95,7 @@ export class EncryptionService {
       
       return JSON.parse(decrypted);
     } catch (error) {
-      throw new Error(`Decryption failed: ${error.message}`);
+      throw new Error(`Decryption failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -112,7 +116,17 @@ export class EncryptionService {
   // Decrypt field-level data
   decryptField(encryptedValue: string, key?: Buffer): string {
     const encryptionKey = key || this.masterKey;
-    const [ivHex, authTagHex, encrypted] = encryptedValue.split(':');
+    const parts = encryptedValue.split(':');
+    
+    if (parts.length !== 3) {
+      throw new Error('Invalid encrypted value format');
+    }
+    
+    const [ivHex, authTagHex, encrypted] = parts;
+    
+    if (!ivHex || !authTagHex || !encrypted) {
+      throw new Error('Invalid encrypted value parts');
+    }
     
     const iv = Buffer.from(ivHex, 'hex');
     const decipher = crypto.createDecipheriv(SecurityConfig.encryption.algorithm, encryptionKey, iv) as crypto.DecipherGCM;

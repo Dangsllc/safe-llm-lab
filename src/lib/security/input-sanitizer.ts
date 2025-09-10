@@ -1,18 +1,25 @@
 // Input sanitization utilities for secure user input handling
+import DOMPurify from 'dompurify';
 
 export class InputSanitizer {
-  // Sanitize text input to prevent XSS
+  // Sanitize text input to prevent XSS using DOMPurify
   static sanitizeText(input: string): string {
     if (typeof input !== 'string') {
       return '';
     }
     
-    return input
-      .replace(/[<>]/g, '') // Remove HTML tags
-      .replace(/javascript:/gi, '') // Remove javascript: URLs
-      .replace(/on\w+\s*=/gi, '') // Remove event handlers
-      .trim()
-      .slice(0, 10000); // Limit length
+    // Use DOMPurify for comprehensive XSS protection
+    const cleaned = DOMPurify.sanitize(input, {
+      ALLOWED_TAGS: [], // No HTML tags allowed in text
+      ALLOWED_ATTR: [],
+      ALLOW_DATA_ATTR: false,
+      ALLOW_UNKNOWN_PROTOCOLS: false,
+      RETURN_DOM_FRAGMENT: false,
+      RETURN_DOM: false,
+      RETURN_TRUSTED_TYPE: false
+    });
+    
+    return cleaned.trim().slice(0, 10000); // Limit length
   }
 
   // Sanitize general input
@@ -36,12 +43,17 @@ export class InputSanitizer {
       return '';
     }
     
-    // Allow research content but prevent code injection
-    return prompt
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '[SCRIPT_REMOVED]')
-      .replace(/javascript:/gi, '[JS_REMOVED]')
-      .trim()
-      .slice(0, 50000); // Larger limit for research prompts
+    // Allow some HTML for formatting but prevent dangerous content
+    const cleaned = DOMPurify.sanitize(prompt, {
+      ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'ul', 'ol', 'li'],
+      ALLOWED_ATTR: [],
+      ALLOW_DATA_ATTR: false,
+      ALLOW_UNKNOWN_PROTOCOLS: false,
+      FORBID_TAGS: ['script', 'object', 'embed', 'iframe', 'form', 'input'],
+      FORBID_ATTR: ['onclick', 'onerror', 'onload', 'style', 'src', 'href']
+    });
+    
+    return cleaned.trim().slice(0, 50000); // Larger limit for research prompts
   }
 
   // Validate and sanitize user input

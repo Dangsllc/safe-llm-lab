@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npm install)",
+      "Bash(npm run dev:*)",
+      "Bash(copy .env.example .env)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

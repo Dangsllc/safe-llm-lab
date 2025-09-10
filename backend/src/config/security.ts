@@ -2,13 +2,35 @@
 
 import crypto from 'crypto';
 
+// Helper function to convert time string to milliseconds
+const toMilliseconds = (timeStr: string): number => {
+  const value = parseInt(timeStr);
+  if (timeStr.endsWith('d')) return value * 24 * 60 * 60 * 1000;
+  if (timeStr.endsWith('h')) return value * 60 * 60 * 1000;
+  if (timeStr.endsWith('m')) return value * 60 * 1000;
+  if (timeStr.endsWith('s')) return value * 1000;
+  return value; // assume milliseconds
+};
+
 export const SecurityConfig = {
   // JWT Configuration
   jwt: {
-    accessTokenSecret: process.env.JWT_ACCESS_SECRET || crypto.randomBytes(64).toString('hex'),
-    refreshTokenSecret: process.env.JWT_REFRESH_SECRET || crypto.randomBytes(64).toString('hex'),
+    accessTokenSecret: process.env['JWT_ACCESS_SECRET'] || (() => {
+      if (process.env['NODE_ENV'] === 'production') {
+        throw new Error('JWT_ACCESS_SECRET must be set in production');
+      }
+      return crypto.randomBytes(64).toString('hex');
+    })(),
+    refreshTokenSecret: process.env['JWT_REFRESH_SECRET'] || (() => {
+      if (process.env['NODE_ENV'] === 'production') {
+        throw new Error('JWT_REFRESH_SECRET must be set in production');
+      }
+      return crypto.randomBytes(64).toString('hex');
+    })(),
     accessTokenExpiry: '15m',
     refreshTokenExpiry: '7d',
+    accessTokenExpiryMs: toMilliseconds('15m'),
+    refreshTokenExpiryMs: toMilliseconds('7d'),
     issuer: 'safe-llm-lab',
     audience: 'safe-llm-lab-users'
   },
@@ -33,9 +55,14 @@ export const SecurityConfig = {
   // Session Security
   session: {
     name: 'safe-llm-session',
-    secret: process.env.SESSION_SECRET || crypto.randomBytes(64).toString('hex'),
+    secret: process.env['SESSION_SECRET'] || (() => {
+      if (process.env['NODE_ENV'] === 'production') {
+        throw new Error('SESSION_SECRET must be set in production');
+      }
+      return crypto.randomBytes(64).toString('hex');
+    })(),
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env['NODE_ENV'] === 'production',
     httpOnly: true,
     sameSite: 'strict' as const,
     rolling: true
@@ -118,7 +145,7 @@ export const SecurityConfig = {
 
   // CORS Configuration
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+    origin: process.env['FRONTEND_URL'] || 'http://localhost:8080',
     credentials: true,
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -134,7 +161,7 @@ export const SecurityConfig = {
 
   // Database Security
   database: {
-    ssl: process.env.NODE_ENV === 'production',
+    ssl: process.env['NODE_ENV'] === 'production',
     connectionTimeout: 60000,
     idleTimeout: 600000,
     maxConnections: 20,
@@ -143,7 +170,7 @@ export const SecurityConfig = {
 
   // Audit Logging
   audit: {
-    logLevel: process.env.LOG_LEVEL || 'info',
+    logLevel: process.env['LOG_LEVEL'] || 'info',
     retentionDays: 90,
     sensitiveFields: [
       'password',
@@ -171,7 +198,7 @@ export const SecurityConfig = {
       'text/csv',
       'text/plain'
     ],
-    scanForMalware: process.env.NODE_ENV === 'production',
+    scanForMalware: process.env['NODE_ENV'] === 'production',
     quarantinePath: '/tmp/quarantine'
   },
 
@@ -180,7 +207,7 @@ export const SecurityConfig = {
     maxRequestSize: '10mb',
     timeout: 30000,
     validateContentType: true,
-    requireHttps: process.env.NODE_ENV === 'production'
+    requireHttps: process.env['NODE_ENV'] === 'production'
   }
 };
 
@@ -200,11 +227,11 @@ export const validateSecurityConfig = (): void => {
   }
 
   // Validate secret lengths
-  if (process.env.JWT_ACCESS_SECRET && process.env.JWT_ACCESS_SECRET.length < 32) {
+  if (process.env['JWT_ACCESS_SECRET'] && process.env['JWT_ACCESS_SECRET'].length < 32) {
     throw new Error('JWT_ACCESS_SECRET must be at least 32 characters');
   }
 
-  if (process.env.SESSION_SECRET && process.env.SESSION_SECRET.length < 32) {
+  if (process.env['SESSION_SECRET'] && process.env['SESSION_SECRET'].length < 32) {
     throw new Error('SESSION_SECRET must be at least 32 characters');
   }
 };

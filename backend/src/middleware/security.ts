@@ -7,38 +7,57 @@ import { body, validationResult, ValidationError } from 'express-validator';
 import { PrismaClient } from '@prisma/client';
 import { SecurityConfig } from '../config/security';
 import { AuditService } from '../services/audit';
-import { JWTPayload, User, UserRole } from '../types/auth';
+import { JWTPayload, UserRole } from '../types/auth';
+import { withUserContext } from '../lib/database';
 import crypto from 'crypto';
-import session, { Session, SessionData } from 'express-session';
+import session from 'express-session';
 
 declare module 'express-session' {
   interface SessionData {
     csrfToken?: string;
-    // Add other session properties as needed
+  }
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        role: UserRole;
+      };
+      userScopedPrisma?: any; // Will be set by middleware
+    }
   }
 }
 
 const prisma = new PrismaClient();
 const audit = AuditService.getInstance();
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-      // Remove the manual session declaration as it's now handled by express-session
-    }
-  }
-}
-
-// Input sanitization middleware
-export const sanitizeInput = (req: Request, res: Response, next: NextFunction): void => {
+// Input sanitization middleware with comprehensive XSS protection
+export const sanitizeInput = (req: Request, _res: Response, next: NextFunction): void => {
   const sanitizeValue = (value: any): any => {
     if (typeof value === 'string') {
-      // Remove potential XSS patterns
+      // Comprehensive XSS protection
       return value
+        // Remove script tags
         .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        // Remove javascript: URLs
         .replace(/javascript:/gi, '')
+        // Remove data: URLs (can contain base64 encoded scripts)
+        .replace(/data:(?:text\/html|application\/javascript)/gi, '')
+        // Remove event handlers
         .replace(/on\w+\s*=/gi, '')
+        // Remove style attributes (can contain expression() in IE)
+        .replace(/style\s*=\s*['"'][^'"]*['"]/gi, '')
+        // Remove common XSS vectors
+        .replace(/expression\s*\(/gi, '')
+        .replace(/vbscript:/gi, '')
+        .replace(/livescript:/gi, '')
+        .replace(/mocha:/gi, '')
+        .replace(/@import/gi, '')
+        // Remove HTML comment exploits
+        .replace(/<!--[\s\S]*?-->/g, '')
         .trim();
     }
     if (typeof value === 'object' && value !== null) {
@@ -77,10 +96,12 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
 
     const decoded = jwt.verify(token, SecurityConfig.jwt.accessTokenSecret) as JWTPayload;
     
-    // Verify session is still active
+    // Hash the token to compare with stored hash
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    
     const session = await prisma.session.findFirst({
       where: {
-        accessToken: token,
+        accessToken: tokenHash, // Compare with hashed token
         isActive: true,
         expiresAt: { gt: new Date() }
       },
@@ -99,29 +120,20 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Update last activity
     await prisma.session.update({
       where: { id: session.id },
       data: { lastActivity: new Date() }
     });
 
-    // Create user object with proper typing
-    const user: User = {
+    req.user = {
       id: session.user.id,
       email: session.user.email,
-      name: session.user.name,
-      passwordHash: session.user.passwordHash,
-      role: session.user.role as unknown as UserRole,
-      isActive: session.user.isActive,
-      mfaEnabled: session.user.mfaEnabled,
-      createdAt: session.user.createdAt,
-      updatedAt: session.user.updatedAt,
-      failedLoginAttempts: session.user.failedLoginAttempts,
-      lastLogin: session.user.lastLogin || undefined,
-      lockedUntil: session.user.lockedUntil || undefined,
+      role: session.user.role as UserRole,
     };
 
-    req.user = user;
+    // Set database user context for RLS
+    req.userScopedPrisma = withUserContext(session.user.id, session.user.role, (tx) => Promise.resolve(tx));
+
     next();
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -151,9 +163,28 @@ export const requireRole = (roles: UserRole[]) => {
   };
 };
 
+// Resource and action-based permission middleware
+export const requirePermission = (resource: string, _action: string) => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    // Simple permission check - in production, this would check against user permissions
+    if (req.user.role === 'ADMIN') {
+      return next();
+    }
+
+    if (req.user.role === 'RESEARCHER' && resource === 'sessions') {
+      return next();
+    }
+
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  };
+};
+
 // CSRF protection middleware
 export const csrfProtection = (req: Request, res: Response, next: NextFunction): void | Response => {
-  // Skip CSRF check for GET/HEAD/OPTIONS requests
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     return next();
   }
@@ -168,7 +199,7 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction):
 };
 
 // Generate and set CSRF token
-export const generateCsrfToken = async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
+export const generateCsrfToken = async (req: Request, _res: Response, next: NextFunction): Promise<void | Response> => {
   if (!req.session) {
     return next(new Error('Session not initialized'));
   }
@@ -192,14 +223,13 @@ export const generateCsrfToken = async (req: Request, res: Response, next: NextF
 };
 
 // Security headers middleware
-export const securityHeaders = (req: Request, res: Response, next: NextFunction): void => {
-  // Set security headers
+export const securityHeaders = (_req: Request, res: Response, next: NextFunction): void => {
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'X-XSS-Protection': '1; mode=block',
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self';",
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; base-uri 'self'; form-action 'self';",
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     'X-Permitted-Cross-Domain-Policies': 'none',
@@ -255,6 +285,7 @@ export const validationRules = {
     .withMessage('Password must contain at least one special character'),
   name: body('name').trim().isLength({ min: 2, max: 100 }),
   role: body('role').isIn(Object.values(UserRole)),
+  mfaToken: body('mfaToken').isLength({ min: 6, max: 6 }).withMessage('MFA token must be 6 digits'),
 };
 
 // Validation middleware
@@ -290,7 +321,6 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
     const { statusCode } = res;
     const responseTime = Date.now() - start;
 
-    // Skip health checks and static files in production
     if (process.env['NODE_ENV'] === 'production' && 
         (originalUrl === '/health' || originalUrl.startsWith('/static/'))) {
       return;
@@ -317,13 +347,15 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
 // IP whitelist middleware (for admin endpoints)
 export const requireWhitelistedIP = (whitelist: string[]) => {
   return (req: Request, res: Response, next: NextFunction): void | Response => {
-    const clientIP = req.ip || req.connection.remoteAddress;
+    const clientIP = req.ip || 
+                   (req.socket && req.socket.remoteAddress) || 
+                   (req.connection && req.connection.remoteAddress);
     
-    if (!whitelist.includes(clientIP)) {
+    if (!clientIP || (typeof clientIP === 'string' && !whitelist.includes(clientIP))) {
       audit.logSecurityEvent({
         type: 'unauthorized_access',
-        ipAddress: clientIP,
-        userAgent: req.get('User-Agent'),
+        ipAddress: clientIP || 'unknown',
+        userAgent: req.get('User-Agent') || 'unknown',
         success: false,
         details: {
           path: req.path,
@@ -332,7 +364,10 @@ export const requireWhitelistedIP = (whitelist: string[]) => {
         }
       });
       
-      return res.status(403).json({ error: 'Access denied' });
+      return res.status(403).json({ 
+        error: 'Access denied',
+        details: 'Your IP address is not authorized to access this resource.'
+      });
     }
     
     next();

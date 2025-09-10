@@ -42,6 +42,8 @@ export interface MFASetupResponse {
 }
 
 export class AuthService {
+  private currentUser: User | null = null;
+
   // User registration
   async register(userData: RegisterRequest): Promise<AuthResponse> {
     try {
@@ -180,67 +182,49 @@ export class AuthService {
     }
   }
 
-  // Get current user from session
+  // Get current user from memory (will be set after successful auth)
   getCurrentUser(): User | null {
-    try {
-      const userData = sessionStorage.getItem('currentUser');
-      return userData ? JSON.parse(userData) : null;
-    } catch (error) {
-      return null;
-    }
+    return this.currentUser;
   }
 
-  // Check if user is authenticated
+  // Check if user is authenticated (tokens are now in HTTP-only cookies)
   isAuthenticated(): boolean {
-    const user = this.getCurrentUser();
-    const token = sessionStorage.getItem('accessToken');
-    return !!(user && token);
+    return this.currentUser !== null;
   }
 
-  // Get access token
+  // Get access token (no longer accessible from client-side for security)
   getAccessToken(): string | null {
-    return sessionStorage.getItem('accessToken');
+    // Tokens are now in HTTP-only cookies, not accessible from JS
+    return null;
   }
 
   // Initialize authentication state on app load
   async initializeAuth(): Promise<User | null> {
-    const token = this.getAccessToken();
-    if (!token) return null;
-
-    // Set token in API client
-    apiClient.setTokens(token);
-
-    // Verify token is still valid by making a test request
+    // Tokens are now in HTTP-only cookies, so we verify auth by calling /auth/me
     try {
       const response = await apiClient.get<User>('/auth/me');
       if (response.success && response.data) {
+        this.currentUser = response.data;
         return response.data;
       }
     } catch (error) {
-      // Token is invalid, clear session
-      this.clearUserSession();
+      // Not authenticated or token expired
+      this.currentUser = null;
     }
 
     return null;
   }
 
   // Private helper methods
-  private storeUserSession(user: User, accessToken: string): void {
-    try {
-      sessionStorage.setItem('currentUser', JSON.stringify(user));
-      sessionStorage.setItem('accessToken', accessToken);
-    } catch (error) {
-      logError('Failed to store user session', 'AUTH-SERVICE');
-    }
+  private storeUserSession(user: User, accessToken?: string): void {
+    // Store user in memory only - tokens are in HTTP-only cookies
+    this.currentUser = user;
+    // Note: accessToken parameter kept for compatibility but not stored
   }
 
   private clearUserSession(): void {
-    try {
-      sessionStorage.removeItem('currentUser');
-      sessionStorage.removeItem('accessToken');
-    } catch (error) {
-      logError('Failed to clear user session', 'AUTH-SERVICE');
-    }
+    // Clear user from memory - cookies will be cleared by logout endpoint
+    this.currentUser = null;
   }
 }
 

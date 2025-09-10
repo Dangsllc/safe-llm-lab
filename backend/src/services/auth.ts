@@ -1,28 +1,27 @@
 // Authentication service with MFA and security features
 
-import argon2, { Options } from 'argon2';
-import jwt from 'jsonwebtoken';
-import speakeasy from 'speakeasy';
-import qrcode from 'qrcode';
-import crypto from 'crypto';
-import { Prisma, PrismaClient, User as PrismaUser, UserRole } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { SecurityConfig } from '../config/security';
-import { EncryptionService } from './encryption';
 import { AuditService } from './audit';
+import { EncryptionService } from './encryption';
 import { 
+  UserRole, 
   User, 
-  UserRegistration, 
   LoginRequest, 
-  JWTPayload,
+  JWTPayload, 
   MFASetupResponse, 
   AuthResult,
   Permission
 } from '../types/auth';
+import * as argon2 from 'argon2';
+import * as jwt from 'jsonwebtoken';
+import * as speakeasy from 'speakeasy';
+import crypto from 'crypto';
 
 // Extend Prisma User type to include our custom methods
-type ExtendedUser = PrismaUser & {
-  permissions?: Permission[]; 
-};
+interface ExtendedUser extends User {
+  permissions?: Permission[];
+}
 
 export class AuthService {
   private prisma: PrismaClient;
@@ -36,13 +35,17 @@ export class AuthService {
   }
 
   // Sanitize user data before sending to client
-  private sanitizeUser(user: ExtendedUser): User {
-    const { passwordHash, mfaSecret, ...sanitized } = user;
-    return sanitized as unknown as User;
+  private sanitizeUser(user: ExtendedUser & { mfaSecret?: string | null }): User {
+    // Convert null to undefined for mfaSecret to match the User type
+    const { mfaSecret, ...rest } = user;
+    return {
+      ...rest,
+      mfaSecret: mfaSecret ?? undefined // Convert null to undefined
+    };
   }
 
   // Register new user with secure password hashing
-  async register(userData: UserRegistration, ipAddress: string): Promise<AuthResult> {
+  async register(userData: { email: string; password: string; name: string; role?: string }, ipAddress: string): Promise<AuthResult> {
     try {
       // Validate password strength
       if (!this.isPasswordStrong(userData.password)) {
@@ -70,10 +73,8 @@ export class AuthService {
         return { success: false, error: 'User already exists' };
       }
 
-      // Ensure role is a valid UserRole or default to RESEARCHER
-      const role: UserRole = Object.values(UserRole).includes(userData.role as UserRole)
-        ? (userData.role as UserRole)
-        : UserRole.RESEARCHER;
+      // Ensure role is valid or default to VIEWER
+      const role = userData.role ? this.toUserRole(userData.role) : UserRole.VIEWER;
 
       // Hash password with proper typing
       const passwordHash = await this.hashPassword(userData.password);
@@ -83,7 +84,7 @@ export class AuthService {
         data: {
           email: userData.email.toLowerCase(),
           name: userData.name,
-          role,
+          role: role as any, // Type assertion needed for Prisma enum
           passwordHash,
           isActive: true
         }
@@ -94,12 +95,15 @@ export class AuthService {
         userId: user.id,
         ipAddress,
         success: true,
-        details: { email: user.email, role: user.role }
+        details: { email: user.email, role: role }
       });
 
       return { 
         success: true, 
-        user: this.sanitizeUser(user as ExtendedUser)
+        user: this.sanitizeUser({
+          ...user,
+          role: this.toUserRole(user.role) // Ensure proper typing
+        })
       };
 
     } catch (error: unknown) {
@@ -246,7 +250,10 @@ export class AuthService {
     });
 
     // Generate QR code
-    const qrCode = await qrcode.toDataURL(secret.otpauth_url!);
+    const qrCode = await speakeasy.otpauthURL({
+      secret: secret.ascii,
+      label: `Safe LLM Lab (${user.email})`
+    });
 
     // Generate backup codes
     const backupCodes = this.encryption.generateBackupCodes(SecurityConfig.mfa.backupCodesCount);
@@ -293,38 +300,69 @@ export class AuthService {
     });
   }
 
-  // Generate JWT tokens
+  // Generate JWT tokens with proper typing and expiration
   private async generateTokens(user: ExtendedUser, ipAddress: string, userAgent: string) {
-    const permissions = this.getUserPermissions(user.role as UserRole);
+    const now = Math.floor(Date.now() / 1000);
+    const accessTokenExpiry = now + (SecurityConfig.jwt.accessTokenExpiryMs / 1000);
+    const refreshTokenExpiry = now + (SecurityConfig.jwt.refreshTokenExpiryMs / 1000);
     
-    const accessToken = jwt.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
-        permissions,
-        jti: crypto.randomUUID(),
-        sessionId: crypto.randomUUID()
-      } as JWTPayload,
-      SecurityConfig.jwt.accessTokenSecret,
-      { expiresIn: SecurityConfig.jwt.accessTokenExpiry }
-    );
+    // Ensure valid role
+    const userRole = this.toUserRole(user.role);
+    const permissions = this.getUserPermissions(userRole);
+    const sessionId = crypto.randomUUID();
+    
+    // Create JWT payload with proper typing
+    const accessTokenPayload: Omit<JWTPayload, 'iat' | 'exp'> & { iat: number; exp: number } = {
+      sub: user.id,
+      email: user.email,
+      role: userRole,
+      permissions,
+      jti: crypto.randomUUID(),
+      sessionId,
+      iat: now,
+      exp: accessTokenExpiry
+    };
 
     const refreshToken = jwt.sign(
-      { sub: user.id, jti: crypto.randomUUID() },
+      { 
+        sub: user.id, 
+        jti: crypto.randomUUID(),
+        sessionId,
+        exp: refreshTokenExpiry 
+      },
       SecurityConfig.jwt.refreshTokenSecret,
-      { expiresIn: SecurityConfig.jwt.refreshTokenExpiry }
+      {
+        algorithm: 'HS256',
+        issuer: SecurityConfig.jwt.issuer,
+        audience: SecurityConfig.jwt.audience
+      }
     );
 
-    // Store session in database
+    // Sign access token with proper options
+    const accessToken = jwt.sign(
+      accessTokenPayload,
+      SecurityConfig.jwt.accessTokenSecret,
+      {
+        algorithm: 'HS256',
+        issuer: SecurityConfig.jwt.issuer,
+        audience: SecurityConfig.jwt.audience
+      }
+    );
+
+    // Hash tokens before storing in database
+    const accessTokenHash = crypto.createHash('sha256').update(accessToken).digest('hex');
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+    // Store session in database with hashed tokens
     await this.prisma.session.create({
       data: {
+        id: sessionId,
         userId: user.id,
-        accessToken,
-        refreshToken,
+        accessToken: accessTokenHash,
+        refreshToken: refreshTokenHash,
         ipAddress,
         userAgent,
-        expiresAt: new Date(Date.now() + SecurityConfig.jwt.refreshTokenExpiryMs),
+        expiresAt: new Date(refreshTokenExpiry * 1000),
         lastActivity: new Date(),
         isActive: true
       }
@@ -333,7 +371,7 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  // Get user permissions based on role
+  // Get user permissions based on role with proper typing
   private getUserPermissions(role: UserRole): Permission[] {
     const basePermissions: Record<UserRole, Permission[]> = {
       [UserRole.ADMIN]: [
@@ -452,8 +490,11 @@ export class AuthService {
   // Logout and invalidate session
   async logout(accessToken: string): Promise<boolean> {
     try {
+      // Hash the token to find the session
+      const tokenHash = crypto.createHash('sha256').update(accessToken).digest('hex');
+      
       await this.prisma.session.updateMany({
-        where: { accessToken },
+        where: { accessToken: tokenHash },
         data: { isActive: false }
       });
       return true;
@@ -465,9 +506,56 @@ export class AuthService {
 
   // Hash password with proper typing
   private async hashPassword(password: string): Promise<string> {
-    return argon2.hash(password, {
-      ...SecurityConfig.password.argon2Options,
-      raw: false, // Ensure we get a string output
+    return await argon2.hash(password, {
+      type: argon2.argon2id,  // Using the enum value
+      memoryCost: 65536,
+      timeCost: 3,
+      parallelism: 4,
+      hashLength: 32
     });
+  }
+
+  // Verify user password (for sensitive operations)
+  async verifyPassword(userId: string, password: string): Promise<ExtendedUser | null> {
+    try {
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user || !user.isActive) return null;
+
+      const isPasswordValid = await argon2.verify(user.passwordHash, password);
+      return isPasswordValid ? (user as ExtendedUser) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // Disable MFA for user
+  async disableMFA(userId: string): Promise<boolean> {
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { 
+          mfaEnabled: false,
+          mfaSecret: null
+        }
+      });
+
+      await this.audit.logSecurityEvent({
+        type: 'mfa_disabled',
+        userId,
+        success: true
+      });
+
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Helper to validate and convert UserRole
+  private toUserRole(role: any): UserRole {
+    if (typeof role === 'string' && Object.keys(UserRole).includes(role)) {
+      return role as UserRole;
+    }
+    return UserRole.VIEWER; // Default role
   }
 }

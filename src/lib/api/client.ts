@@ -17,8 +17,6 @@ interface ApiResponse<T = any> {
 
 export class SecureApiClient {
   private config: ApiConfig;
-  private accessToken: string | null = null;
-  private refreshToken: string | null = null;
 
   constructor(config: Partial<ApiConfig> = {}) {
     this.config = {
@@ -28,18 +26,14 @@ export class SecureApiClient {
     };
   }
 
-  // Set authentication tokens
+  // Legacy methods kept for compatibility (tokens now in HTTP-only cookies)
   setTokens(accessToken: string, refreshToken?: string): void {
-    this.accessToken = accessToken;
-    if (refreshToken) {
-      this.refreshToken = refreshToken;
-    }
+    // No-op: tokens are now managed via HTTP-only cookies
   }
 
-  // Clear authentication tokens
+  // Clear authentication tokens (cookies cleared by server on logout)
   clearTokens(): void {
-    this.accessToken = null;
-    this.refreshToken = null;
+    // No-op: cookies cleared by server
   }
 
   // Make authenticated API request
@@ -54,31 +48,37 @@ export class SecureApiClient {
       ...options.headers as Record<string, string>
     };
 
-    // Add authentication header if token exists
-    if (this.accessToken) {
-      headers.Authorization = `Bearer ${this.accessToken}`;
-    }
+    // No manual Authorization header needed - using HTTP-only cookies now
 
     const requestOptions: RequestInit = {
       ...options,
       headers,
-      credentials: 'include' // Include cookies for refresh token
+      credentials: 'include' // Include HTTP-only cookies for authentication
     };
 
     try {
       const response = await this.fetchWithTimeout(url, requestOptions);
       
-      // Handle token refresh if needed
-      if (response.status === 401 && this.refreshToken) {
-        const refreshed = await this.refreshAccessToken();
-        if (refreshed) {
-          // Retry original request with new token
-          headers.Authorization = `Bearer ${this.accessToken}`;
-          const retryResponse = await this.fetchWithTimeout(url, {
-            ...requestOptions,
-            headers
-          });
-          return await this.handleResponse<T>(retryResponse);
+      // Handle token refresh if needed (automatic with HTTP-only cookies)
+      if (response.status === 401) {
+        // Try refresh token endpoint - cookies will be updated automatically
+        try {
+          const refreshResponse = await this.fetchWithTimeout(
+            `${this.config.baseURL}/auth/refresh`, 
+            {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+          
+          if (refreshResponse.ok) {
+            // Retry original request with refreshed cookies
+            const retryResponse = await this.fetchWithTimeout(url, requestOptions);
+            return await this.handleResponse<T>(retryResponse);
+          }
+        } catch (refreshError) {
+          // Refresh failed, return original 401 response
         }
       }
 

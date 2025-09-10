@@ -1,11 +1,14 @@
 // Authentication and authorization types for multi-user system
 
-export enum UserRole {
-  ADMIN = 'admin',
-  RESEARCHER = 'researcher', 
-  ANALYST = 'analyst',
-  VIEWER = 'viewer'
-}
+// Re-export Prisma's UserRole to ensure type consistency
+export const UserRole = {
+  admin: 'admin',
+  researcher: 'researcher',
+  analyst: 'analyst',
+  viewer: 'viewer'
+} as const;
+
+export type UserRole = keyof typeof UserRole;
 
 export enum CollaborationRole {
   OWNER = 'owner',
@@ -103,6 +106,7 @@ export type SecurityEventType =
   | 'failed_auth'
   | 'password_change'
   | 'mfa_enabled'
+  | 'mfa_disabled'
   | 'permission_change'
   | 'data_access'
   | 'suspicious_activity'

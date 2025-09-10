@@ -16,10 +16,10 @@ router.get('/', authenticateToken, async (req, res) => {
     await auditService.logSecurityEvent({
       userId: req.user?.id,
       type: 'server_error',
-      ipAddress: req.ip,
+      ipAddress: req.ip || 'unknown',
       userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { endpoint: '/sessions', error: error.message }
+      details: { endpoint: '/sessions', error: error instanceof Error ? error.message : 'Unknown error' }
     });
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
@@ -34,10 +34,10 @@ router.post('/', authenticateToken, requirePermission('sessions', 'create'), asy
     await auditService.logSecurityEvent({
       userId: req.user?.id,
       type: 'server_error',
-      ipAddress: req.ip,
+      ipAddress: req.ip || 'unknown',
       userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { endpoint: 'POST /sessions', error: error.message }
+      details: { endpoint: 'POST /sessions', error: error instanceof Error ? error.message : 'Unknown error' }
     });
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
@@ -47,15 +47,15 @@ router.post('/', authenticateToken, requirePermission('sessions', 'create'), asy
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     // TODO: Implement test session retrieval by ID
-    res.json({ success: true, data: { id: req.params.id } });
+    res.json({ success: true, data: { id: req.params['id'] } });
   } catch (error) {
     await auditService.logSecurityEvent({
       userId: req.user?.id,
       type: 'server_error',
-      ipAddress: req.ip,
+      ipAddress: req.ip || 'unknown',
       userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { endpoint: `/sessions/${req.params.id}`, error: error.message }
+      details: { endpoint: `/sessions/${req.params['id']}`, error: error instanceof Error ? error.message : 'Unknown error' }
     });
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
@@ -65,15 +65,15 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, requirePermission('sessions', 'update'), async (req, res) => {
   try {
     // TODO: Implement test session update logic
-    res.json({ success: true, data: { id: req.params.id } });
+    res.json({ success: true, data: { id: req.params['id'] } });
   } catch (error) {
     await auditService.logSecurityEvent({
       userId: req.user?.id,
       type: 'server_error',
-      ipAddress: req.ip,
+      ipAddress: req.ip || 'unknown',
       userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { endpoint: `PUT /sessions/${req.params.id}`, error: error.message }
+      details: { endpoint: `PUT /sessions/${req.params['id']}`, error: error instanceof Error ? error.message : 'Unknown error' }
     });
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
@@ -88,10 +88,10 @@ router.delete('/:id', authenticateToken, requirePermission('sessions', 'delete')
     await auditService.logSecurityEvent({
       userId: req.user?.id,
       type: 'server_error',
-      ipAddress: req.ip,
+      ipAddress: req.ip || 'unknown',
       userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { endpoint: `DELETE /sessions/${req.params.id}`, error: error.message }
+      details: { endpoint: `DELETE /sessions/${req.params['id']}`, error: error instanceof Error ? error.message : 'Unknown error' }
     });
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
