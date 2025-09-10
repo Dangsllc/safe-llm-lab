@@ -100,6 +100,7 @@ export type SecurityEventType =
   | 'login'
   | 'logout'
   | 'failed_login'
+  | 'failed_auth'
   | 'password_change'
   | 'mfa_enabled'
   | 'permission_change'
@@ -118,7 +119,18 @@ export type SecurityEventType =
   | 'websocket_message_processed'
   | 'websocket_message_failed'
   | 'websocket_disconnected'
-  | 'websocket_error';
+  | 'websocket_error'
+  | 'unauthorized_access'
+  | 'rate_limit_exceeded'
+  | 'validation_failed'
+  | 'api_request'
+  | 'ip_blocked'
+  | 'registration_error'
+  | 'login_error'
+  | 'server_error'
+  | 'not_found'
+  | 'failed_registration'
+  | 'registration';
 
 export interface SecurityEvent {
   id: string;
@@ -129,7 +141,7 @@ export interface SecurityEvent {
   success: boolean;
   details?: Record<string, any>;
   timestamp: Date;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 }
 
 export interface Session {

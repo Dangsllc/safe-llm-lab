@@ -4,9 +4,11 @@ import {
   TestTube, 
   Shield, 
   Database,
-  Home
+  Home,
+  Settings2
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 
 import {
   Sidebar,
@@ -20,14 +22,29 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
-const navigationItems = [
-  { title: "Dashboard", url: "/", icon: Home },
-  { title: "Prompt Library", url: "/prompts", icon: FileText },
-  { title: "Testing Interface", url: "/testing", icon: TestTube },
-  { title: "Safety Monitor", url: "/safety", icon: Shield },
-  { title: "Results", url: "/results", icon: BarChart3 },
-  { title: "Data Management", url: "/data", icon: Database },
-];
+const NavigationItems = () => {
+  const { user } = useAuth();
+  
+  const mainNavigation = [
+    { title: "Dashboard", url: "/", icon: Home },
+    { title: "Prompt Library", url: "/prompts", icon: FileText },
+    { title: "Testing Interface", url: "/testing", icon: TestTube },
+    { title: "Safety Monitor", url: "/safety", icon: Shield },
+    { title: "Results", url: "/results", icon: BarChart3 },
+    { title: "Data Management", url: "/data", icon: Database },
+  ];
+
+  // Only show admin link to researchers/admins
+  if (user?.role === 'researcher' || user?.role === 'admin') {
+    mainNavigation.push({
+      title: "Admin",
+      url: "/admin",
+      icon: Settings2
+    });
+  }
+
+  return mainNavigation;
+};
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -44,7 +61,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Research Tools</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navigationItems.map((item) => (
+              {NavigationItems().map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink 

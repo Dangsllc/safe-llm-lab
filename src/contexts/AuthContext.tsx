@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { mockAuthService as authService, User, LoginRequest, RegisterRequest, AuthResponse } from '@/lib/api/mock-auth';
 import { logSecurity, logError } from '@/lib/security/secure-logger';
+import { PageLoader } from '@/components/LoadingSpinner';
 
 interface AuthContextType {
   user: User | null;
@@ -28,35 +29,46 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Initialize authentication state on app load
   useEffect(() => {
-    initializeAuth();
+    const init = async () => {
+      try {
+        const currentUser = await authService.initializeAuth();
+        setUser(currentUser);
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        logError('Auth initialization failed', 'AUTH-CONTEXT');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    init();
   }, []);
-
-  const initializeAuth = async () => {
-    try {
-      const currentUser = await authService.initializeAuth();
-      setUser(currentUser);
-    } catch (error) {
-      logError('Auth initialization failed', 'AUTH-CONTEXT');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const login = async (loginData: LoginRequest): Promise<AuthResponse> => {
     try {
+      setIsLoading(true);
       const result = await authService.login(loginData);
       
       if (result.success && result.user) {
+        // Update user state and ensure isAuthenticated will be true
         setUser(result.user);
         logSecurity('User logged in via context', { userId: result.user.id });
+        // Force a re-render to ensure isAuthenticated is updated
+        return { ...result, user: { ...result.user } };
       }
       
       return result;
     } catch (error) {
+      console.error('Login error:', error);
       logError('Login failed in context', 'AUTH-CONTEXT');
-      return { success: false, error: 'Login failed' };
+      return { success: false, error: 'Login failed. Please try again.' };
+    } finally {
+      setIsLoading(false);
     }
   };
+  
+  // Use a more reliable way to check authentication
+  const isAuthenticated = React.useMemo(() => !!user, [user]);
 
   const register = async (userData: RegisterRequest): Promise<AuthResponse> => {
     try {
@@ -128,7 +140,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value: AuthContextType = {
     user,
-    isAuthenticated: !!user,
+    isAuthenticated,
     isLoading,
     login,
     register,
@@ -140,7 +152,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!isLoading ? children : <div className="flex items-center justify-center min-h-screen"><PageLoader text="Loading..." /></div>}
     </AuthContext.Provider>
   );
 }

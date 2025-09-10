@@ -1,7 +1,9 @@
 // Database schema for multi-user Safe LLM Lab with security features
+// This schema defines the database structure for the Safe LLM Lab platform
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["clientExtensions"]
 }
 
 datasource db {
@@ -9,52 +11,66 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// User roles for access control
+/// These roles define what actions users can perform in the system
 enum UserRole {
-  ADMIN
-  RESEARCHER
-  ANALYST
-  VIEWER
+  admin       @map("admin")      // Full system access
+  researcher  @map("researcher") // Can create and manage studies
+  analyst     @map("analyst")    // Can analyze study data
+  viewer      @map("viewer")     // Read-only access
 }
 
+/// Roles for study collaboration
+/// Defines permissions within a specific study
 enum CollaborationRole {
-  OWNER
-  EDITOR
-  CONTRIBUTOR
-  VIEWER
+  OWNER       @map("owner")       // Full control over the study
+  EDITOR      @map("editor")      // Can edit study content and settings
+  CONTRIBUTOR @map("contributor") // Can add test sessions and templates
+  VIEWER      @map("viewer")      // Read-only access to the study
 }
 
+/// Status of a study
 enum StudyStatus {
-  PLANNING
-  ACTIVE
-  PAUSED
-  COMPLETED
-  ARCHIVED
+  DRAFT       @map("draft")      // Initial state, not yet active
+  PLANNING    @map("planning")   // In planning phase
+  ACTIVE      @map("active")     // Currently active and collecting data
+  PAUSED      @map("paused")     // Temporarily paused
+  COMPLETED   @map("completed")  // Study is complete
+  ARCHIVED    @map("archived")   // Archived for reference
 }
 
+/// Risk level classification
 enum RiskLevel {
-  LOW
-  MEDIUM
-  HIGH
+  LOW       @map("low")      // Minimal risk
+  MEDIUM    @map("medium")   // Moderate risk
+  HIGH      @map("high")     // Significant risk
+  CRITICAL  @map("critical") // Critical risk - requires immediate attention
 }
 
+/// Types of security events that are logged
 enum SecurityEventType {
-  LOGIN
-  LOGOUT
-  FAILED_LOGIN
-  PASSWORD_CHANGE
-  MFA_ENABLED
-  PERMISSION_CHANGE
-  DATA_ACCESS
-  SUSPICIOUS_ACTIVITY
+  LOGIN                 @map("login")
+  LOGOUT                @map("logout")
+  FAILED_LOGIN          @map("failed_login")
+  PASSWORD_CHANGE       @map("password_change")
+  MFA_ENABLED          @map("mfa_enabled")
+  MFA_DISABLED         @map("mfa_disabled")
+  PERMISSION_CHANGE     @map("permission_change")
+  DATA_ACCESS           @map("data_access")
+  SUSPICIOUS_ACTIVITY   @map("suspicious_activity")
+  RATE_LIMIT_EXCEEDED   @map("rate_limit_exceeded")
+  CSRF_VIOLATION        @map("csrf_violation")
 }
 
+/// Severity levels for security events
 enum Severity {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
+  LOW       @map("low")
+  MEDIUM    @map("medium")
+  HIGH      @map("high")
+  CRITICAL  @map("critical")
 }
 
+/// User account information and authentication details
 model User {
   id                   String    @id @default(uuid())
   email                String    @unique

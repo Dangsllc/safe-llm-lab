@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .status {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .success { color: #22c55e; }
+        .error { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="status">
+        <h1>Safe LLM Lab - Server Test</h1>
+        <p class="success">✓ HTML file is loading</p>
+        <p class="success">✓ CSS styles are working</p>
+        <p id="js-test" class="error">✗ JavaScript not loaded</p>
+        
+        <h3>Next Steps:</h3>
+        <ol>
+            <li>If you see this page, the server is working</li>
+            <li>Check browser console (F12) for errors</li>
+            <li>Try accessing: <a href="/">http://localhost:5173/</a></li>
+        </ol>
+        
+        <div id="console-output">
+            <h4>Console Output:</h4>
+            <div id="errors" style="background: #fee; padding: 10px; border-radius: 4px; margin-top: 10px;">
+                No errors detected yet...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Test JavaScript execution
+        document.getElementById('js-test').innerHTML = '<span class="success">✓ JavaScript is working</span>';
+        
+        // Capture and display console errors
+        const originalError = console.error;
+        const errorDiv = document.getElementById('errors');
+        let errorCount = 0;
+        
+        console.error = function(...args) {
+            errorCount++;
+            errorDiv.innerHTML = `<strong>Error ${errorCount}:</strong> ${args.join(' ')}<br>` + errorDiv.innerHTML;
+            originalError.apply(console, args);
+        };
+        
+        // Test if we can access the main app
+        fetch('/')
+            .then(response => {
+                if (response.ok) {
+                    console.log('Main app endpoint is accessible');
+                } else {
+                    console.error('Main app endpoint returned:', response.status);
+                }
+            })
+            .catch(error => {
+                console.error('Failed to access main app:', error);
+            });
+            
+        console.log('Test page loaded successfully');
+    </script>
+</body>
+</html>

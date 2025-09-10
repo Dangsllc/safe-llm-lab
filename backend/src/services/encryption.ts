@@ -48,7 +48,7 @@ export class EncryptionService {
     try {
       const userKey = this.generateUserKey(userId);
       const iv = crypto.randomBytes(SecurityConfig.encryption.ivLength);
-      const cipher = crypto.createCipher(SecurityConfig.encryption.algorithm, userKey);
+      const cipher = crypto.createCipheriv(SecurityConfig.encryption.algorithm, userKey, iv) as crypto.CipherGCM;
       cipher.setAAD(Buffer.from(userId)); // Additional authenticated data
       
       const plaintext = JSON.stringify(data);
@@ -76,10 +76,12 @@ export class EncryptionService {
       const userKey = this.generateUserKey(userId);
       const data = JSON.parse(Buffer.from(encryptedData, 'base64').toString());
       
-      const decipher = crypto.createDecipher(
+      const iv = Buffer.from(data.iv, 'hex');
+      const decipher = crypto.createDecipheriv(
         SecurityConfig.encryption.algorithm,
-        userKey
-      );
+        userKey,
+        iv
+      ) as crypto.DecipherGCM;
       
       decipher.setAAD(Buffer.from(userId));
       decipher.setAuthTag(Buffer.from(data.authTag, 'hex'));
@@ -97,7 +99,7 @@ export class EncryptionService {
   encryptField(value: string, key?: Buffer): string {
     const encryptionKey = key || this.masterKey;
     const iv = crypto.randomBytes(SecurityConfig.encryption.ivLength);
-    const cipher = crypto.createCipher(SecurityConfig.encryption.algorithm, encryptionKey);
+    const cipher = crypto.createCipheriv(SecurityConfig.encryption.algorithm, encryptionKey, iv) as crypto.CipherGCM;
     
     let encrypted = cipher.update(value, 'utf8', 'hex');
     encrypted += cipher.final('hex');
@@ -112,7 +114,8 @@ export class EncryptionService {
     const encryptionKey = key || this.masterKey;
     const [ivHex, authTagHex, encrypted] = encryptedValue.split(':');
     
-    const decipher = crypto.createDecipher(SecurityConfig.encryption.algorithm, encryptionKey);
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv(SecurityConfig.encryption.algorithm, encryptionKey, iv) as crypto.DecipherGCM;
     decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
     
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');

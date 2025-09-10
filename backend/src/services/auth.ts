@@ -1,24 +1,27 @@
 // Authentication service with MFA and security features
 
-import bcrypt from 'bcrypt';
-import argon2 from 'argon2';
+import argon2, { Options } from 'argon2';
 import jwt from 'jsonwebtoken';
 import speakeasy from 'speakeasy';
 import qrcode from 'qrcode';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient, User as PrismaUser, UserRole } from '@prisma/client';
 import { SecurityConfig } from '../config/security';
 import { EncryptionService } from './encryption';
 import { AuditService } from './audit';
 import { 
   User, 
-  UserRole, 
-  AuthResult, 
   UserRegistration, 
   LoginRequest, 
   JWTPayload,
-  MFASetupResponse 
+  MFASetupResponse, 
+  AuthResult 
 } from '../types/auth';
+
+// Extend Prisma User type to include our custom methods
+type ExtendedUser = PrismaUser & {
+  permissions?: any[]; // We'll type this properly after our Prisma client is updated
+};
 
 export class AuthService {
   private prisma: PrismaClient;
@@ -29,6 +32,12 @@ export class AuthService {
     this.prisma = new PrismaClient();
     this.encryption = EncryptionService.getInstance();
     this.audit = AuditService.getInstance();
+  }
+
+  // Sanitize user data before sending to client
+  private sanitizeUser(user: ExtendedUser): User {
+    const { passwordHash, mfaSecret, ...sanitized } = user;
+    return sanitized as unknown as User;
   }
 
   // Register new user with secure password hashing
@@ -60,15 +69,18 @@ export class AuthService {
         return { success: false, error: 'User already exists' };
       }
 
-      // Hash password with Argon2
-      const passwordHash = await argon2.hash(userData.password, SecurityConfig.password.argon2Options);
-
-      // Create user
+      // Hash password with proper typing
+      const passwordHash = await this.hashPassword(userData.password);
+      
+      // Use Prisma's UserRole with a default of RESEARCHER
+      const role: UserRole = (userData.role as UserRole) || UserRole.RESEARCHER;
+      
+      // Create user with properly typed role
       const user = await this.prisma.user.create({
         data: {
           email: userData.email.toLowerCase(),
           name: userData.name,
-          role: userData.role || UserRole.RESEARCHER,
+          role,
           passwordHash,
           isActive: true
         }
@@ -84,17 +96,24 @@ export class AuthService {
 
       return { 
         success: true, 
-        user: this.sanitizeUser(user)
+        user: this.sanitizeUser(user as ExtendedUser)
       };
 
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await this.audit.logSecurityEvent({
-        type: 'failed_registration',
+        type: 'registration_error',
         ipAddress,
         success: false,
-        details: { error: error.message }
+        details: { 
+          email: userData.email,
+          error: errorMessage 
+        }
       });
-      return { success: false, error: 'Registration failed' };
+      return { 
+        success: false, 
+        error: 'Registration failed. Please try again.' 
+      };
     }
   }
 
@@ -168,7 +187,7 @@ export class AuthService {
       });
 
       // Generate tokens
-      const tokens = await this.generateTokens(user, ipAddress, userAgent);
+      const tokens = await this.generateTokens(user as ExtendedUser, ipAddress, userAgent);
 
       await this.audit.logSecurityEvent({
         type: 'login',
@@ -181,19 +200,26 @@ export class AuthService {
 
       return {
         success: true,
-        user: this.sanitizeUser(user),
+        user: this.sanitizeUser(user as ExtendedUser),
         tokens
       };
 
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await this.audit.logSecurityEvent({
-        type: 'failed_login',
+        type: 'login_error',
         ipAddress,
         userAgent,
         success: false,
-        details: { error: error.message }
+        details: { 
+          email: loginData.email,
+          error: errorMessage 
+        }
       });
-      return { success: false, error: 'Login failed' };
+      return { 
+        success: false, 
+        error: 'Login failed. Please try again.' 
+      };
     }
   }
 
@@ -265,7 +291,7 @@ export class AuthService {
   }
 
   // Generate JWT tokens
-  private async generateTokens(user: User, ipAddress: string, userAgent: string) {
+  private async generateTokens(user: ExtendedUser, ipAddress: string, userAgent: string) {
     const sessionId = crypto.randomUUID();
     const jti = crypto.randomUUID();
 
@@ -366,12 +392,6 @@ export class AuthService {
     return permissions[role] || [];
   }
 
-  // Remove sensitive fields from user object
-  private sanitizeUser(user: any): Omit<User, 'passwordHash' | 'mfaSecret'> {
-    const { passwordHash, mfaSecret, ...sanitized } = user;
-    return sanitized;
-  }
-
   // Refresh access token
   async refreshToken(refreshToken: string, ipAddress: string): Promise<AuthResult> {
     try {
@@ -391,7 +411,7 @@ export class AuthService {
       }
 
       // Generate new tokens
-      const tokens = await this.generateTokens(session.user, ipAddress, '');
+      const tokens = await this.generateTokens(session.user as ExtendedUser, ipAddress, '');
       
       // Invalidate old session
       await this.prisma.session.update({
@@ -401,12 +421,16 @@ export class AuthService {
 
       return {
         success: true,
-        user: this.sanitizeUser(session.user),
+        user: this.sanitizeUser(session.user as ExtendedUser),
         tokens
       };
 
-    } catch (error) {
-      return { success: false, error: 'Token refresh failed' };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return { 
+        success: false, 
+        error: 'Token refresh failed. Please try again.' 
+      };
     }
   }
 
@@ -418,8 +442,17 @@ export class AuthService {
         data: { isActive: false }
       });
       return true;
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return false;
     }
+  }
+
+  // Hash password with proper typing
+  private async hashPassword(password: string): Promise<string> {
+    return argon2.hash(password, {
+      ...SecurityConfig.password.argon2Options,
+      raw: false, // Ensure we get a string output
+    });
   }
 }

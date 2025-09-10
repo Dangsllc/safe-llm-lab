@@ -6,6 +6,14 @@
     <title>Safe LLM Lab - Research Platform</title>
     <meta name="description" content="LLM Safety Research Data Collection Platform" />
     <meta name="author" content="Safe LLM Lab" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5" />
+    <meta name="theme-color" content="#ffffff" />
 
     <!-- Security Headers -->
     <meta http-equiv="X-Frame-Options" content="DENY" />
@@ -13,14 +21,14 @@
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()" />
     
-    <!-- Content Security Policy -->
+    <!-- Content Security Policy - Relaxed for development -->
     <meta http-equiv="Content-Security-Policy" content="
-      default-src 'self';
-      script-src 'self' 'unsafe-inline' 'unsafe-eval';
-      style-src 'self' 'unsafe-inline';
-      img-src 'self' data: https:;
-      font-src 'self' data:;
-      connect-src 'self' https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com;
+      default-src 'self' 'unsafe-inline' 'unsafe-eval';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:;
+      style-src 'self' 'unsafe-inline' blob: data:;
+      img-src 'self' data: https: blob:;
+      font-src 'self' data: blob:;
+      connect-src 'self' ws: wss: https: http: blob: data:;
       frame-ancestors 'none';
       base-uri 'self';
       form-action 'self';

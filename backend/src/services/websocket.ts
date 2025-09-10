@@ -151,7 +151,7 @@ export class SecureWebSocketService {
         }
 
         // Set up message handlers
-        authenticatedWs.on('message', (data) => this.handleMessage(authenticatedWs, data));
+        authenticatedWs.on('message', (data) => this.handleMessage(authenticatedWs, data as Buffer));
         authenticatedWs.on('close', () => this.handleDisconnection(authenticatedWs));
         authenticatedWs.on('error', (error) => this.handleError(authenticatedWs, error));
 
@@ -323,7 +323,7 @@ export class SecureWebSocketService {
    */
   private async encryptMessage(message: string, key: Buffer): Promise<Buffer> {
     const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipher('aes-256-gcm', key);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv) as crypto.CipherGCM;
     cipher.setAAD(Buffer.from('websocket-message'));
     
     let encrypted = cipher.update(message, 'utf8', 'hex');
@@ -341,7 +341,8 @@ export class SecureWebSocketService {
   private async decryptMessage(encryptedData: Buffer, key: Buffer): Promise<string> {
     const data = JSON.parse(encryptedData.toString());
     
-    const decipher = crypto.createDecipher('aes-256-gcm', key);
+    const iv = Buffer.from(data.iv, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv) as crypto.DecipherGCM;
     decipher.setAAD(Buffer.from('websocket-message'));
     decipher.setAuthTag(Buffer.from(data.authTag, 'hex'));
     

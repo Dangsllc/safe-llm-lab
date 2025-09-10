@@ -37,7 +37,7 @@ app.set('trust proxy', 1);
 app.use(helmet({
   contentSecurityPolicy: SecurityConfig.headers.contentSecurityPolicy,
   hsts: SecurityConfig.headers.hsts,
-  referrerPolicy: { policy: SecurityConfig.headers.referrerPolicy }
+  referrerPolicy: SecurityConfig.headers.referrerPolicy as any
 }));
 
 // CORS configuration
@@ -102,7 +102,7 @@ app.use('/api/users', userRoutes);
 app.use(async (error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   await audit.logSecurityEvent({
     type: 'server_error',
-    userId: req.user?.id,
+    userId: (req as any).user?.id,
     ipAddress: req.ip,
     userAgent: req.get('User-Agent'),
     success: false,
@@ -125,7 +125,7 @@ app.use(async (error: any, req: express.Request, res: express.Response, next: ex
 app.use('*', async (req, res) => {
   await audit.logSecurityEvent({
     type: 'not_found',
-    userId: req.user?.id,
+    userId: (req as any).user?.id,
     ipAddress: req.ip,
     userAgent: req.get('User-Agent'),
     success: false,

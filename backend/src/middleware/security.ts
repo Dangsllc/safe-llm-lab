@@ -3,14 +3,32 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
-import { body, validationResult } from 'express-validator';
+import { body, validationResult, ValidationError } from 'express-validator';
 import { PrismaClient } from '@prisma/client';
 import { SecurityConfig } from '../config/security';
 import { AuditService } from '../services/audit';
-import { JWTPayload } from '../types/auth';
+import { JWTPayload, User, UserRole } from '../types/auth';
+import crypto from 'crypto';
+import session, { Session, SessionData } from 'express-session';
+
+declare module 'express-session' {
+  interface SessionData {
+    csrfToken?: string;
+    // Add other session properties as needed
+  }
+}
 
 const prisma = new PrismaClient();
 const audit = AuditService.getInstance();
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: User;
+      session?: Session & Partial<SessionData>;
+    }
+  }
+}
 
 // Input sanitization middleware
 export const sanitizeInput = (req: Request, res: Response, next: NextFunction) => {
@@ -87,188 +105,211 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       data: { lastActivity: new Date() }
     });
 
-    req.user = {
+    // Create user object with proper typing
+    const user: User = {
       id: session.user.id,
       email: session.user.email,
-      role: session.user.role,
-      permissions: decoded.permissions
+      name: session.user.name,
+      passwordHash: session.user.passwordHash,
+      role: session.user.role as unknown as UserRole,
+      isActive: session.user.isActive,
+      mfaEnabled: session.user.mfaEnabled,
+      createdAt: session.user.createdAt,
+      updatedAt: session.user.updatedAt,
+      failedLoginAttempts: session.user.failedLoginAttempts,
+      lastLogin: session.user.lastLogin || undefined,
+      lockedUntil: session.user.lockedUntil || undefined,
     };
 
+    req.user = user;
     next();
-  } catch (error) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await audit.logSecurityEvent({
       type: 'failed_auth',
       ipAddress: req.ip,
-      userAgent: req.get('User-Agent'),
+      userAgent: req.get('User-Agent') || '',
       success: false,
-      details: { error: error.message }
+      details: { error: errorMessage }
     });
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 };
 
 // Role-based authorization middleware
-export const requireRole = (roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      audit.logSecurityEvent({
-        type: 'unauthorized_access',
-        userId: req.user?.id,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        success: false,
-        details: { requiredRoles: roles, userRole: req.user?.role }
-      });
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-};
-
-// Permission-based authorization middleware
-export const requirePermission = (resource: string, action: string) => {
+export const requireRole = (roles: UserRole[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const hasPermission = req.user.permissions.some((perm: any) => 
-      (perm.resource === resource || perm.resource === '*') &&
-      (perm.actions.includes(action) || perm.actions.includes('*'))
-    );
-
-    if (!hasPermission) {
-      audit.logSecurityEvent({
-        type: 'unauthorized_access',
-        userId: req.user.id,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        success: false,
-        details: { resource, action, permissions: req.user.permissions }
-      });
-      return res.status(403).json({ error: 'Permission denied' });
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
     }
 
     next();
   };
+};
+
+// CSRF protection middleware
+export const csrfProtection = (req: Request, res: Response, next: NextFunction) => {
+  // Skip CSRF check for GET/HEAD/OPTIONS requests
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
+  const csrfToken = (req.headers['x-csrf-token'] || req.body?._csrf) as string | undefined;
+  
+  if (!csrfToken || csrfToken !== req.session?.['csrfToken']) {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
+  }
+
+  next();
+};
+
+// Generate and set CSRF token
+export const generateCsrfToken = async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.session) {
+    return next(new Error('Session not initialized'));
+  }
+  
+  try {
+    const buffer = await new Promise<Buffer>((resolve, reject) => {
+      crypto.randomBytes(32, (err, buf) => {
+        if (err) reject(err);
+        else resolve(buf);
+      });
+    });
+    
+    const token = buffer.toString('hex');
+    if (req.session) {
+      req.session['csrfToken'] = token;
+    }
+    res.locals.csrfToken = token;
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Security headers middleware
+export const securityHeaders = (req: Request, res: Response, next: NextFunction) => {
+  // Set security headers
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-XSS-Protection': '1; mode=block',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self';",
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'X-Permitted-Cross-Domain-Policies': 'none',
+    'Cross-Origin-Resource-Policy': 'same-site'
+  });
+
+  next();
 };
 
 // Rate limiting middleware
-export const createRateLimit = (config: any) => {
+export const createRateLimit = (config: {
+  windowMs: number;
+  max: number;
+  message?: string;
+  skip?: (req: Request) => boolean;
+}) => {
   return rateLimit({
-    ...config,
-    handler: async (req: Request, res: Response) => {
+    windowMs: config.windowMs,
+    max: config.max,
+    message: config.message || 'Too many requests, please try again later.',
+    skip: config.skip,
+    handler: async (req, res) => {
       await audit.logSecurityEvent({
         type: 'rate_limit_exceeded',
-        userId: req.user?.id,
         ipAddress: req.ip,
         userAgent: req.get('User-Agent'),
         success: false,
-        details: { endpoint: req.path, method: req.method }
+        details: {
+          path: req.path,
+          method: req.method,
+          userId: req.user?.id
+        }
       });
-      res.status(429).json({ error: 'Too many requests' });
+      
+      res.status(429).json({ error: 'Too many requests, please try again later.' });
     }
   });
-};
-
-// Validation middleware
-export const validateRequest = (validations: any[]) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    await Promise.all(validations.map(validation => validation.run(req)));
-
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      await audit.logSecurityEvent({
-        type: 'validation_failed',
-        userId: req.user?.id,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        success: false,
-        details: { errors: errors.array(), endpoint: req.path }
-      });
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    next();
-  };
 };
 
 // Common validation rules
 export const validationRules = {
   email: body('email').isEmail().normalizeEmail(),
   password: body('password')
-    .isLength({ min: SecurityConfig.password.minLength })
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
-    .withMessage('Password must contain uppercase, lowercase, number and special character'),
-  name: body('name').isLength({ min: 2, max: 100 }).trim().escape(),
-  studyName: body('name').isLength({ min: 3, max: 200 }).trim().escape(),
-  studyDescription: body('description').isLength({ max: 1000 }).trim().escape(),
-  promptContent: body('content').isLength({ min: 10, max: 5000 }).trim(),
-  classification: body('classification').isIn(['0.0', '0.5', '1.0', '0.0-hard', 'error']),
-  riskLevel: body('riskLevel').isIn(['low', 'medium', 'high']),
-  uuid: body('id').isUUID(),
-  mfaToken: body('mfaToken').isLength({ min: 6, max: 6 }).isNumeric()
+    .isLength({ min: 12 })
+    .withMessage('Password must be at least 12 characters long')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/)
+    .withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/)
+    .withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage('Password must contain at least one special character'),
+  name: body('name').trim().isLength({ min: 2, max: 100 }),
+  role: body('role').isIn(Object.values(UserRole)),
 };
 
-// Security headers middleware
-export const securityHeaders = (req: Request, res: Response, next: NextFunction) => {
-  // Set security headers
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Referrer-Policy', SecurityConfig.headers.referrerPolicy);
-  res.setHeader('Permissions-Policy', 
-    Object.entries(SecurityConfig.headers.permissionsPolicy)
-      .map(([key, value]) => `${key}=(${Array.isArray(value) ? value.join(' ') : value})`)
-      .join(', ')
-  );
+// Validation middleware
+export const validateRequest = (validations: any[]) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await Promise.all(validations.map(validation => validation.run(req)));
 
-  if (process.env.NODE_ENV === 'production') {
-    res.setHeader('Strict-Transport-Security', 
-      `max-age=${SecurityConfig.headers.hsts.maxAge}; includeSubDomains; preload`
-    );
-  }
+      const errors = validationResult(req);
+      if (errors.isEmpty()) {
+        return next();
+      }
 
-  next();
-};
+      const errorMessages = errors.array().map((err: ValidationError & { param?: string }) => ({
+        field: err.param || 'unknown',
+        message: err.msg || 'Validation error',
+      }));
 
-// CSRF protection middleware
-export const csrfProtection = (req: Request, res: Response, next: NextFunction) => {
-  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
-    const token = req.headers['x-csrf-token'] || req.body._csrf;
-    const sessionToken = req.session?.csrfToken;
-
-    if (!token || !sessionToken || token !== sessionToken) {
-      return res.status(403).json({ error: 'Invalid CSRF token' });
+      return res.status(400).json({ errors: errorMessages });
+    } catch (error) {
+      next(error);
     }
-  }
-  next();
+  };
 };
 
 // Request logging middleware
 export const requestLogger = (req: Request, res: Response, next: NextFunction) => {
-  const startTime = Date.now();
-  
+  const start = Date.now();
+  const { method, originalUrl, ip, user } = req;
+  const userAgent = req.get('User-Agent') || '';
+
   res.on('finish', async () => {
-    const duration = Date.now() - startTime;
-    
-    // Log suspicious requests
-    if (duration > 10000 || res.statusCode >= 400) {
-      await audit.logSecurityEvent({
-        type: 'api_request',
-        userId: req.user?.id,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        success: res.statusCode < 400,
-        details: {
-          method: req.method,
-          path: req.path,
-          statusCode: res.statusCode,
-          duration,
-          suspicious: duration > 10000 || res.statusCode === 429
-        }
-      });
+    const { statusCode } = res;
+    const responseTime = Date.now() - start;
+
+    // Skip health checks and static files in production
+    if (process.env['NODE_ENV'] === 'production' && 
+        (originalUrl === '/health' || originalUrl.startsWith('/static/'))) {
+      return;
     }
+
+    await audit.logSecurityEvent({
+      type: 'api_request',
+      userId: user?.id,
+      ipAddress: ip,
+      userAgent,
+      success: statusCode < 400,
+      details: {
+        method,
+        path: originalUrl,
+        status: statusCode,
+        responseTime: `${responseTime}ms`,
+      },
+    }).catch(console.error);
   });
 
   next();
@@ -277,17 +318,22 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
 // IP whitelist middleware (for admin endpoints)
 export const requireWhitelistedIP = (whitelist: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const clientIP = req.ip;
+    const clientIP = req.ip || req.connection.remoteAddress;
     
     if (!whitelist.includes(clientIP)) {
       audit.logSecurityEvent({
-        type: 'ip_blocked',
+        type: 'unauthorized_access',
         ipAddress: clientIP,
         userAgent: req.get('User-Agent'),
         success: false,
-        details: { endpoint: req.path, whitelist }
+        details: {
+          path: req.path,
+          method: req.method,
+          reason: 'ip_not_whitelisted'
+        }
       });
-      return res.status(403).json({ error: 'Access denied from this IP' });
+      
+      return res.status(403).json({ error: 'Access denied' });
     }
     
     next();
