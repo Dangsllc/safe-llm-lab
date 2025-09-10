@@ -25,13 +25,13 @@ declare global {
   namespace Express {
     interface Request {
       user?: User;
-      session?: Session & Partial<SessionData>;
+      // Remove the manual session declaration as it's now handled by express-session
     }
   }
 }
 
 // Input sanitization middleware
-export const sanitizeInput = (req: Request, res: Response, next: NextFunction) => {
+export const sanitizeInput = (req: Request, res: Response, next: NextFunction): void => {
   const sanitizeValue = (value: any): any => {
     if (typeof value === 'string') {
       // Remove potential XSS patterns
@@ -59,7 +59,7 @@ export const sanitizeInput = (req: Request, res: Response, next: NextFunction) =
 };
 
 // JWT authentication middleware
-export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
+export const authenticateToken = async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(' ')[1];
@@ -68,7 +68,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       await audit.logSecurityEvent({
         type: 'failed_auth',
         ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
+        userAgent: req.get('User-Agent') || 'unknown',
         success: false,
         details: { reason: 'no_token' }
       });
@@ -92,7 +92,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
         type: 'failed_auth',
         userId: decoded.sub,
         ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
+        userAgent: req.get('User-Agent') || 'unknown',
         success: false,
         details: { reason: 'invalid_session' }
       });
@@ -128,7 +128,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
     await audit.logSecurityEvent({
       type: 'failed_auth',
       ipAddress: req.ip,
-      userAgent: req.get('User-Agent') || '',
+      userAgent: req.get('User-Agent') || 'unknown',
       success: false,
       details: { error: errorMessage }
     });
@@ -138,7 +138,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
 
 // Role-based authorization middleware
 export const requireRole = (roles: UserRole[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
@@ -152,7 +152,7 @@ export const requireRole = (roles: UserRole[]) => {
 };
 
 // CSRF protection middleware
-export const csrfProtection = (req: Request, res: Response, next: NextFunction) => {
+export const csrfProtection = (req: Request, res: Response, next: NextFunction): void | Response => {
   // Skip CSRF check for GET/HEAD/OPTIONS requests
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     return next();
@@ -168,7 +168,7 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction) 
 };
 
 // Generate and set CSRF token
-export const generateCsrfToken = async (req: Request, res: Response, next: NextFunction) => {
+export const generateCsrfToken = async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
   if (!req.session) {
     return next(new Error('Session not initialized'));
   }
@@ -185,15 +185,14 @@ export const generateCsrfToken = async (req: Request, res: Response, next: NextF
     if (req.session) {
       req.session['csrfToken'] = token;
     }
-    res.locals.csrfToken = token;
     next();
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
 // Security headers middleware
-export const securityHeaders = (req: Request, res: Response, next: NextFunction) => {
+export const securityHeaders = (req: Request, res: Response, next: NextFunction): void => {
   // Set security headers
   res.set({
     'X-Content-Type-Options': 'nosniff',
@@ -235,7 +234,7 @@ export const createRateLimit = (config: {
         }
       });
       
-      res.status(429).json({ error: 'Too many requests, please try again later.' });
+      return res.status(429).json({ error: 'Too many requests, please try again later.' });
     }
   });
 };
@@ -260,7 +259,7 @@ export const validationRules = {
 
 // Validation middleware
 export const validateRequest = (validations: any[]) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
     try {
       await Promise.all(validations.map(validation => validation.run(req)));
 
@@ -276,13 +275,13 @@ export const validateRequest = (validations: any[]) => {
 
       return res.status(400).json({ errors: errorMessages });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   };
 };
 
 // Request logging middleware
-export const requestLogger = (req: Request, res: Response, next: NextFunction) => {
+export const requestLogger = (req: Request, res: Response, next: NextFunction): void => {
   const start = Date.now();
   const { method, originalUrl, ip, user } = req;
   const userAgent = req.get('User-Agent') || '';
@@ -317,7 +316,7 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
 
 // IP whitelist middleware (for admin endpoints)
 export const requireWhitelistedIP = (whitelist: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
     const clientIP = req.ip || req.connection.remoteAddress;
     
     if (!whitelist.includes(clientIP)) {

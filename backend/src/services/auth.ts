@@ -15,12 +15,13 @@ import {
   LoginRequest, 
   JWTPayload,
   MFASetupResponse, 
-  AuthResult 
+  AuthResult,
+  Permission
 } from '../types/auth';
 
 // Extend Prisma User type to include our custom methods
 type ExtendedUser = PrismaUser & {
-  permissions?: any[]; // We'll type this properly after our Prisma client is updated
+  permissions?: Permission[]; 
 };
 
 export class AuthService {
@@ -69,11 +70,13 @@ export class AuthService {
         return { success: false, error: 'User already exists' };
       }
 
+      // Ensure role is a valid UserRole or default to RESEARCHER
+      const role: UserRole = Object.values(UserRole).includes(userData.role as UserRole)
+        ? (userData.role as UserRole)
+        : UserRole.RESEARCHER;
+
       // Hash password with proper typing
       const passwordHash = await this.hashPassword(userData.password);
-      
-      // Use Prisma's UserRole with a default of RESEARCHER
-      const role: UserRole = (userData.role as UserRole) || UserRole.RESEARCHER;
       
       // Create user with properly typed role
       const user = await this.prisma.user.create({
@@ -292,46 +295,71 @@ export class AuthService {
 
   // Generate JWT tokens
   private async generateTokens(user: ExtendedUser, ipAddress: string, userAgent: string) {
-    const sessionId = crypto.randomUUID();
-    const jti = crypto.randomUUID();
-
-    const payload: JWTPayload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      permissions: await this.getUserPermissions(user.role),
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (15 * 60), // 15 minutes
-      jti,
-      sessionId
-    };
-
-    const accessToken = jwt.sign(payload, SecurityConfig.jwt.accessTokenSecret, {
-      expiresIn: SecurityConfig.jwt.accessTokenExpiry,
-      issuer: SecurityConfig.jwt.issuer,
-      audience: SecurityConfig.jwt.audience
-    });
+    const permissions = this.getUserPermissions(user.role as UserRole);
+    
+    const accessToken = jwt.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        permissions,
+        jti: crypto.randomUUID(),
+        sessionId: crypto.randomUUID()
+      } as JWTPayload,
+      SecurityConfig.jwt.accessTokenSecret,
+      { expiresIn: SecurityConfig.jwt.accessTokenExpiry }
+    );
 
     const refreshToken = jwt.sign(
-      { sub: user.id, sessionId, jti },
+      { sub: user.id, jti: crypto.randomUUID() },
       SecurityConfig.jwt.refreshTokenSecret,
       { expiresIn: SecurityConfig.jwt.refreshTokenExpiry }
     );
 
-    // Store session
+    // Store session in database
     await this.prisma.session.create({
       data: {
-        id: sessionId,
         userId: user.id,
         accessToken,
         refreshToken,
         ipAddress,
         userAgent,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+        expiresAt: new Date(Date.now() + SecurityConfig.jwt.refreshTokenExpiryMs),
+        lastActivity: new Date(),
+        isActive: true
       }
     });
 
     return { accessToken, refreshToken };
+  }
+
+  // Get user permissions based on role
+  private getUserPermissions(role: UserRole): Permission[] {
+    const basePermissions: Record<UserRole, Permission[]> = {
+      [UserRole.ADMIN]: [
+        { resource: 'users', actions: ['create', 'read', 'update', 'delete', 'admin'] },
+        { resource: 'studies', actions: ['create', 'read', 'update', 'delete', 'admin'] },
+        { resource: 'templates', actions: ['create', 'read', 'update', 'delete', 'admin'] },
+        { resource: 'sessions', actions: ['read', 'admin'] },
+        { resource: 'system', actions: ['admin'] }
+      ],
+      [UserRole.RESEARCHER]: [
+        { resource: 'studies', actions: ['create', 'read', 'update', 'delete'] },
+        { resource: 'templates', actions: ['create', 'read', 'update'] },
+        { resource: 'sessions', actions: ['read'] }
+      ],
+      [UserRole.ANALYST]: [
+        { resource: 'studies', actions: ['read'] },
+        { resource: 'templates', actions: ['read'] },
+        { resource: 'sessions', actions: ['read'] }
+      ],
+      [UserRole.VIEWER]: [
+        { resource: 'studies', actions: ['read'] },
+        { resource: 'templates', actions: ['read'] }
+      ]
+    };
+
+    return basePermissions[role] || [];
   }
 
   // Handle failed login attempts
@@ -377,19 +405,6 @@ export class AuthService {
     if (config.requireSpecialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
     
     return true;
-  }
-
-  // Get user permissions based on role
-  private async getUserPermissions(role: UserRole) {
-    // Implementation would return role-based permissions
-    const permissions = {
-      [UserRole.ADMIN]: ['*'],
-      [UserRole.RESEARCHER]: ['studies:*', 'templates:*', 'sessions:*'],
-      [UserRole.ANALYST]: ['studies:read', 'sessions:read', 'templates:read'],
-      [UserRole.VIEWER]: ['studies:read', 'sessions:read']
-    };
-
-    return permissions[role] || [];
   }
 
   // Refresh access token
